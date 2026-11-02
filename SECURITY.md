@@ -34,7 +34,7 @@ The system is constructed with a multi-layered security model where each layer e
 ## 2. Authentication Security
 
 ### 2.1 Password Policy
-- **Minimum Length**: 12 characters (16+ recommended).
+- **Minimum Length**: 8 characters (12+ recommended).
 - **Complexity Requirements**:
   - At least one uppercase Latin character (`A-Z`).
   - At least one lowercase Latin character (`a-z`).

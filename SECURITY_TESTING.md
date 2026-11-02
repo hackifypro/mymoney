@@ -28,7 +28,7 @@ npm run test:security
 | **Test 04** | **Privilege Separation**| Ordinary user cannot access admin routes or methods | Calling admin functions with role `user` throws `SecurityAuthorizationError`; audit logs `ACCESS_DENIED`. |
 | **Test 05** | **Privilege Separation**| User cannot self-elevate role to `admin` | Tampered transaction payload with spoofed `user_id` or role is rejected by `validateTransactionPayload`. |
 | **Test 06** | **Data Privacy** | Admin user list and audit logs never expose passwords | Admin list object keys contain only `id`, `email`, `createdAt`, `status`. Passwords/hashes/tokens are strictly absent. |
-| **Test 07** | **Authentication** | Password policy enforces 12+ characters and complexity | Passwords under 12 characters, missing uppercase, digits, or symbols are rejected with descriptive errors. |
+| **Test 07** | **Authentication** | Password policy enforces 8+ characters and complexity | Passwords under 8 characters, missing uppercase, digits, or symbols are rejected with descriptive errors. |
 | **Test 08** | **Input Validation** | Stored and reflected XSS payloads are neutralized | `<script>`, `<iframe>`, and `onerror=` event handlers are stripped; special HTML entities (`&`, `<`, `>`, `"`) are encoded. |
 | **Test 09** | **Data Integrity** | Negative amounts, NaN, and numeric overflow are rejected | Negative numbers, zero, strings, and values > ₹10 Crore are rejected by `validateAmount`. |
 | **Test 10** | **Rate Limiting** | 5 consecutive failed logins trigger lockout restriction | After 5 failed attempts, `rateLimiter.check()` returns `allowed: false` with positive lockout countdown. |
