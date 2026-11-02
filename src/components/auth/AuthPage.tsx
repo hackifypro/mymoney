@@ -7,14 +7,12 @@ import {
   ArrowRight,
   Eye,
   EyeOff,
-  ShieldCheck,
-  KeyRound,
   CheckCircle2,
   XCircle,
   AlertCircle,
   RotateCcw,
 } from 'lucide-react';
-import { useAuth, DEFAULT_ADMIN_CREDENTIALS } from '../../context/AuthContext';
+import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { validatePasswordStrength } from '../../lib/security';
 
@@ -105,13 +103,6 @@ export const AuthPage: React.FC = () => {
     } finally {
       setIsSubmitting(false);
     }
-  };
-
-  const handleFillAdmin = () => {
-    setEmail(DEFAULT_ADMIN_CREDENTIALS.email);
-    setPassword(DEFAULT_ADMIN_CREDENTIALS.password);
-    setMode('login');
-    toast.info('Admin Credentials Filled', 'Click "Log In" to access Admin Security account.');
   };
 
   return (
@@ -398,36 +389,6 @@ export const AuthPage: React.FC = () => {
               )}
             </button>
           </form>
-
-          {/* Admin Credentials Quick-Fill Card */}
-          <div className="mt-6 pt-5 border-t border-slate-100 dark:border-slate-800">
-            <div className="p-3.5 bg-amber-50 dark:bg-amber-950/40 rounded-2xl border border-amber-200 dark:border-amber-900/50">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-bold text-amber-800 dark:text-amber-300 flex items-center gap-1.5">
-                  <KeyRound className="w-3.5 h-3.5" />
-                  <span>Admin Credentials (12+ Char Policy)</span>
-                </span>
-                <button
-                  type="button"
-                  onClick={handleFillAdmin}
-                  className="text-[11px] font-bold text-amber-600 dark:text-amber-400 hover:underline cursor-pointer"
-                >
-                  Auto-Fill
-                </button>
-              </div>
-
-              <div className="mt-2 text-[11px] font-mono text-slate-600 dark:text-slate-300 space-y-0.5">
-                <div>
-                  <span className="text-slate-400">ID / Email:</span>{' '}
-                  <span className="font-bold text-slate-800 dark:text-slate-200">{DEFAULT_ADMIN_CREDENTIALS.email}</span>
-                </div>
-                <div>
-                  <span className="text-slate-400">Password:</span>{' '}
-                  <span className="font-bold text-slate-800 dark:text-slate-200">{DEFAULT_ADMIN_CREDENTIALS.password}</span>
-                </div>
-              </div>
-            </div>
-          </div>
         </div>
       </div>
     </div>
