@@ -322,9 +322,9 @@ export const AuthPage: React.FC = () => {
 
                     {/* Criteria checklist */}
                     <div className="grid grid-cols-2 gap-1 text-[10px] text-slate-600 dark:text-slate-400 pt-1">
-                      <span className={`flex items-center gap-1 ${password.length >= 12 ? 'text-emerald-600 font-bold' : ''}`}>
-                        {password.length >= 12 ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3 text-slate-300" />}
-                        12+ characters
+                      <span className={`flex items-center gap-1 ${password.length >= 8 ? 'text-emerald-600 font-bold' : ''}`}>
+                        {password.length >= 8 ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3 text-slate-300" />}
+                        8+ characters
                       </span>
                       <span className={`flex items-center gap-1 ${/[A-Z]/.test(password) ? 'text-emerald-600 font-bold' : ''}`}>
                         {/[A-Z]/.test(password) ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3 text-slate-300" />}

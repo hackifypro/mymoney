@@ -207,8 +207,8 @@ const COMMON_WEAK_PASSWORDS = new Set([
 ]);
 
 /**
- * Enforces enterprise-grade password requirements:
- * - Minimum 12 characters
+ * Enforces password requirements:
+ * - Minimum 8 characters
  * - Uppercase letter
  * - Lowercase letter
  * - Number
@@ -228,12 +228,12 @@ export function validatePasswordStrength(password: string): PasswordStrengthResu
     };
   }
 
-  // 1. Length Check (12+ chars required by security specification)
-  if (password.length < 12) {
-    errors.push('Password must be at least 12 characters long.');
+  // 1. Length Check (8+ chars)
+  if (password.length < 8) {
+    errors.push('Password must be at least 8 characters long.');
   } else {
     score += 1;
-    if (password.length >= 16) score += 1; // Extra credit for 16+
+    if (password.length >= 12) score += 1; // Extra credit for 12+
   }
 
   // 2. Character diversity

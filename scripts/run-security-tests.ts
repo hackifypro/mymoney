@@ -233,32 +233,36 @@ runTest(6, 'Data Privacy', 'Admin user list and audit logs never expose password
 });
 
 // -------------------------------------------------------------
-// TEST 7: Strong Password Policy Enforcement (12+ Characters)
+// TEST 7: Password Policy Enforcement (8+ Characters)
 // -------------------------------------------------------------
-runTest(7, 'Authentication', 'Weak or short passwords rejected by policy', () => {
-  // Test 1: Short password
+runTest(7, 'Authentication', 'Weak or short passwords (<8 chars) rejected by policy', () => {
+  // Test 1: Short password (under 8 chars)
   const shortResult = validatePasswordStrength('Abc1!');
   assert(!shortResult.isValid, 'Short password (5 chars) should be rejected');
   assert(
-    shortResult.errors.some((e) => e.includes('12 characters')),
-    'Missing 12 characters error'
+    shortResult.errors.some((e) => e.includes('8 characters')),
+    'Missing 8 characters error'
   );
 
   // Test 2: Missing uppercase
-  const noUpper = validatePasswordStrength('mypassword123!@#');
+  const noUpper = validatePasswordStrength('mypass123!@#');
   assert(!noUpper.isValid, 'Password without uppercase should be rejected');
 
   // Test 3: Missing special character
-  const noSpecial = validatePasswordStrength('MyPassword123456');
+  const noSpecial = validatePasswordStrength('MyPass1234');
   assert(!noSpecial.isValid, 'Password without special character should be rejected');
 
   // Test 4: Common weak dictionary password
   const common = validatePasswordStrength('password12345');
   assert(!common.isValid, 'Common password should be rejected');
 
-  // Test 5: Valid strong enterprise password (12+ chars, upper, lower, digit, symbol)
+  // Test 5: Valid 8-character password with upper, lower, digit, symbol
+  const valid8Char = validatePasswordStrength('Pass@123');
+  assert(valid8Char.isValid, 'Valid 8-character password Pass@123 was rejected');
+
+  // Test 6: Valid strong enterprise password
   const valid = validatePasswordStrength('Admin@Sec2026!Master');
-  assert(valid.isValid, 'Valid 18-char strong password was unexpectedly rejected');
+  assert(valid.isValid, 'Valid strong password was rejected');
 });
 
 // -------------------------------------------------------------
