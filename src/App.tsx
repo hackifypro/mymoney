@@ -1,0 +1,158 @@
+import React, { useState } from 'react';
+import { ThemeProvider } from './context/ThemeContext';
+import { ToastProvider } from './context/ToastContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import { ExpenseProvider } from './context/ExpenseContext';
+import { Sidebar, NavTab } from './components/common/Sidebar';
+import { Navbar } from './components/common/Navbar';
+import { MobileNav } from './components/common/MobileNav';
+import { DashboardView } from './components/dashboard/DashboardView';
+import { HomeSection } from './components/home/HomeSection';
+import { RoomSection } from './components/room/RoomSection';
+import { OtherSection } from './components/other/OtherSection';
+import { PeopleSection } from './components/people/PeopleSection';
+import { ReportsSection } from './components/reports/ReportsSection';
+import { AllTransactionsSection } from './components/all-transactions/AllTransactionsSection';
+import { SettingsSection } from './components/settings/SettingsSection';
+import { AdminDashboard } from './components/admin/AdminDashboard';
+import { AddTransactionModal } from './components/modals/AddTransactionModal';
+import { AuthPage } from './components/auth/AuthPage';
+import { TransactionCategory, TransactionSubcategory } from './types';
+import { Wallet } from 'lucide-react';
+
+const MainContent: React.FC = () => {
+  const { user, isLoading } = useAuth();
+
+  const [currentTab, setCurrentTab] = useState<NavTab>('dashboard');
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  // Modal State
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [modalInitialCategory, setModalInitialCategory] = useState<TransactionCategory>('home');
+  const [modalInitialSubcategory, setModalInitialSubcategory] = useState<TransactionSubcategory | undefined>(undefined);
+  const [modalInitialPerson, setModalInitialPerson] = useState<string | undefined>(undefined);
+
+  const handleOpenAddModal = (
+    category: TransactionCategory = 'home',
+    subcategory?: TransactionSubcategory,
+    personName?: string
+  ) => {
+    setModalInitialCategory(category);
+    setModalInitialSubcategory(subcategory);
+    setModalInitialPerson(personName);
+    setIsAddModalOpen(true);
+  };
+
+  // Loading state
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center">
+        <div className="w-12 h-12 rounded-2xl bg-emerald-600 text-white flex items-center justify-center animate-bounce shadow-xl">
+          <Wallet className="w-6 h-6" />
+        </div>
+        <p className="text-xs font-bold text-slate-500 mt-4 tracking-wider uppercase">Loading My Money...</p>
+      </div>
+    );
+  }
+
+  // If user is not logged in, render AuthPage (Login & Register)
+  if (!user) {
+    return <AuthPage />;
+  }
+
+  return (
+    <div className="flex min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors">
+      {/* Sidebar for Desktop */}
+      <Sidebar
+        currentTab={currentTab}
+        onSelectTab={setCurrentTab}
+        onOpenAddModal={() => handleOpenAddModal(currentTab === 'all_transactions' ? 'home' : (currentTab as any))}
+      />
+
+      {/* Main Content Area */}
+      <div className="flex-1 flex flex-col min-w-0 min-h-screen">
+        {/* Top Navbar */}
+        <Navbar
+          currentTab={currentTab}
+          onOpenMobileMenu={() => setIsMobileMenuOpen(true)}
+          onOpenAddModal={() => handleOpenAddModal(currentTab === 'all_transactions' ? 'home' : (currentTab as any))}
+          onSelectTab={setCurrentTab}
+        />
+
+        {/* Dynamic Section Views */}
+        <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">
+          {currentTab === 'dashboard' && (
+            <DashboardView
+              onNavigate={setCurrentTab}
+              onOpenAddModal={handleOpenAddModal}
+            />
+          )}
+
+          {currentTab === 'home' && (
+            <HomeSection onOpenAddModal={handleOpenAddModal} />
+          )}
+
+          {currentTab === 'room' && (
+            <RoomSection onOpenAddModal={handleOpenAddModal} />
+          )}
+
+          {currentTab === 'other' && (
+            <OtherSection onOpenAddModal={handleOpenAddModal} />
+          )}
+
+          {currentTab === 'people' && (
+            <PeopleSection onOpenAddModal={handleOpenAddModal} />
+          )}
+
+          {currentTab === 'reports' && (
+            <ReportsSection />
+          )}
+
+          {currentTab === 'all_transactions' && (
+            <AllTransactionsSection onOpenAddModal={handleOpenAddModal} />
+          )}
+
+          {currentTab === 'settings' && (
+            <SettingsSection />
+          )}
+
+          {currentTab === 'admin' && (
+            <AdminDashboard />
+          )}
+        </main>
+      </div>
+
+      {/* Mobile Drawer & Bottom Navigation */}
+      <MobileNav
+        isOpen={isMobileMenuOpen}
+        onClose={() => setIsMobileMenuOpen(false)}
+        currentTab={currentTab}
+        onSelectTab={setCurrentTab}
+        onOpenAddModal={() => handleOpenAddModal(currentTab === 'all_transactions' ? 'home' : (currentTab as any))}
+      />
+
+      {/* Universal Add Transaction Modal */}
+      <AddTransactionModal
+        isOpen={isAddModalOpen}
+        onClose={() => setIsAddModalOpen(false)}
+        initialCategory={modalInitialCategory}
+        initialSubcategory={modalInitialSubcategory}
+        initialPersonName={modalInitialPerson}
+      />
+    </div>
+  );
+};
+
+export default function App() {
+  return (
+    <ThemeProvider>
+      <ToastProvider>
+        <AuthProvider>
+          <ExpenseProvider>
+            <MainContent />
+          </ExpenseProvider>
+        </AuthProvider>
+      </ToastProvider>
+    </ThemeProvider>
+  );
+}
