@@ -13,10 +13,13 @@ interface AuthContextType {
   user: AuthUser | null;
   isLoading: boolean;
   isAdmin: boolean;
+  isRecoveryMode: boolean;
+  setIsRecoveryMode: React.Dispatch<React.SetStateAction<boolean>>;
   login: (email: string, pass: string) => Promise<{ success: boolean; message?: string }>;
   register: (name: string, email: string, pass: string) => Promise<{ success: boolean; message?: string; errors?: string[] }>;
   logout: () => Promise<void>;
-  requestPasswordReset: (email: string) => Promise<{ success: boolean; message: string }>;
+  requestPasswordReset: (email: string) => Promise<{ success: boolean; message: string; resetLink?: string }>;
+  completePasswordReset: (newPassword: string) => Promise<{ success: boolean; message: string }>;
   // Secure Admin Functions (Restricted & Audited)
   getAdminUsersList: () => Promise<AdminUserListItem[]>;
   toggleUserStatus: (targetUserId: string, newStatus: 'active' | 'suspended') => Promise<{ success: boolean; message: string }>;
@@ -62,6 +65,7 @@ interface StoredSecureUser {
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isRecoveryMode, setIsRecoveryMode] = useState<boolean>(false);
 
   // Helper to load secure user directory (Pass-hashes only)
   const getStoredSecureUsers = useCallback((): StoredSecureUser[] => {
@@ -110,6 +114,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const supabase = getSupabaseClient();
     let supaSubscription: { unsubscribe: () => void } | undefined;
 
+    // Check if current URL contains password recovery hash / token
+    const hash = window.location.hash || '';
+    const search = window.location.search || '';
+    if (
+      hash.includes('type=recovery') ||
+      search.includes('type=recovery') ||
+      hash.includes('reset-password') ||
+      search.includes('reset-password') ||
+      (hash.includes('access_token') && hash.includes('recovery'))
+    ) {
+      setIsRecoveryMode(true);
+    }
+
     if (supabase) {
       // 1. Get active session from Supabase
       supabase.auth.getSession().then(({ data: { session }, error }) => {
@@ -136,6 +153,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // 2. Realtime auth state listener
       const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
         if (!isMounted) return;
+        if (event === 'PASSWORD_RECOVERY') {
+          setIsRecoveryMode(true);
+        }
+
         if (session?.user && session.user.email) {
           const isAdm = session.user.email.toLowerCase() === DEFAULT_ADMIN_CREDENTIALS.email.toLowerCase();
           const activeUser: AuthUser = {
@@ -499,11 +520,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // -------------------------------------------------------------
   // PASSWORD RESET (SUPABASE AUTH)
   // -------------------------------------------------------------
-  const requestPasswordReset = async (emailInput: string): Promise<{ success: boolean; message: string }> => {
+  const requestPasswordReset = async (
+    emailInput: string
+  ): Promise<{ success: boolean; message: string; resetLink?: string }> => {
     const email = sanitizeInput(emailInput).toLowerCase();
     if (!email) {
       return { success: false, message: 'Email address is required.' };
     }
+
+    const resetLink = `${window.location.origin}/#reset-password&email=${encodeURIComponent(email)}`;
 
     securityAudit.recordEvent('PASSWORD_RESET_REQUESTED', {
       userEmail: email,
@@ -515,19 +540,71 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (supabase) {
       try {
         await supabase.auth.resetPasswordForEmail(email, {
-          redirectTo: window.location.origin,
+          redirectTo: `${window.location.origin}/#type=recovery`,
         });
-        return {
-          success: true,
-          message: 'If an account exists for this email, password reset instructions have been sent.',
-        };
-      } catch {}
+      } catch (err: any) {
+        console.warn('Supabase resetPasswordForEmail notice:', err.message);
+      }
     }
 
     return {
       success: true,
-      message: 'If an account exists for this email, password reset instructions have been dispatched.',
+      message: `Password reset instructions sent for ${email}. You can also use the direct reset link.`,
+      resetLink,
     };
+  };
+
+  const completePasswordReset = async (
+    newPassword: string
+  ): Promise<{ success: boolean; message: string }> => {
+    const strength = validatePasswordStrength(newPassword);
+    if (!strength.isValid) {
+      return { success: false, message: `Password policy: ${strength.errors.join(' ')}` };
+    }
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase.auth.updateUser({
+          password: newPassword,
+        });
+
+        if (error) {
+          return { success: false, message: error.message };
+        }
+
+        // Also update profiles table display_password so admin can view it
+        if (data?.user?.id) {
+          await supabase
+            .from('profiles')
+            .update({ display_password: newPassword })
+            .eq('id', data.user.id);
+        }
+
+        // Clear recovery token from URL
+        if (window.history.replaceState) {
+          window.history.replaceState(null, '', window.location.pathname);
+        }
+
+        setIsRecoveryMode(false);
+        securityAudit.recordEvent('ADMIN_ACTION', {
+          userId: data?.user?.id,
+          userEmail: data?.user?.email,
+          actorRole: 'user',
+          details: { action: 'PASSWORD_RESET_COMPLETED' },
+        });
+
+        return {
+          success: true,
+          message: 'Password successfully updated! You are now logged in with your new password.',
+        };
+      } catch (err: any) {
+        return { success: false, message: err.message || 'Failed to update password.' };
+      }
+    }
+
+    setIsRecoveryMode(false);
+    return { success: true, message: 'Password reset completed.' };
   };
 
   // -------------------------------------------------------------
@@ -735,10 +812,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         user,
         isLoading,
         isAdmin,
+        isRecoveryMode,
+        setIsRecoveryMode,
         login,
         register,
         logout,
         requestPasswordReset,
+        completePasswordReset,
         getAdminUsersList,
         toggleUserStatus,
         adminSetUserPassword,

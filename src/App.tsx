@@ -24,7 +24,7 @@ import { TransactionCategory, TransactionSubcategory } from './types';
 import { Wallet, AlertTriangle } from 'lucide-react';
 
 const MainContent: React.FC = () => {
-  const { user, isAdmin, isLoading } = useAuth();
+  const { user, isAdmin, isLoading, isRecoveryMode } = useAuth();
   const { maintenanceSettings, dynamicSections, refreshTransactions } = useExpense();
 
   const [currentTab, setCurrentTab] = useState<NavTab>('dashboard');
@@ -63,8 +63,8 @@ const MainContent: React.FC = () => {
     );
   }
 
-  // If user is not logged in, render AuthPage (Login & Register)
-  if (!user) {
+  // If user is in password recovery mode or not logged in, render AuthPage
+  if (isRecoveryMode || !user) {
     return <AuthPage />;
   }
 

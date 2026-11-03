@@ -141,8 +141,17 @@ export const AdminDashboard: React.FC = () => {
     email: string;
   } | null>(null);
   const [newPasswordInput, setNewPasswordInput] = useState<string>('');
+  const [confirmPasswordInput, setConfirmPasswordInput] = useState<string>('');
   const [showPasswordText, setShowPasswordText] = useState<boolean>(false);
+  const [showConfirmPasswordText, setShowConfirmPasswordText] = useState<boolean>(false);
   const [isSettingPassword, setIsSettingPassword] = useState<boolean>(false);
+
+  // Reset Link modal state
+  const [resetLinkModalUser, setResetLinkModalUser] = useState<{
+    email: string;
+    link: string;
+  } | null>(null);
+  const [copiedResetLink, setCopiedResetLink] = useState<boolean>(false);
 
   const [deleteModalUser, setDeleteModalUser] = useState<{
     userId: string;
@@ -304,8 +313,10 @@ export const AdminDashboard: React.FC = () => {
   const handleTriggerPasswordReset = async (email: string) => {
     try {
       const res = await requestPasswordReset(email);
+      const link = res.resetLink || `${window.location.origin}/#reset-password&email=${encodeURIComponent(email)}`;
+      setResetLinkModalUser({ email, link });
       if (res.success) {
-        toast.success('Reset Email Sent', `Password reset instruction dispatched to ${email}`);
+        toast.success('Reset Dispatched', `Password reset instructions prepared for ${email}`);
       } else {
         toast.error('Reset Failed', res.message);
       }
@@ -314,11 +325,13 @@ export const AdminDashboard: React.FC = () => {
     }
   };
 
-  // Set Password
+  // Set Password (Requires entering password 2 times)
   const handleOpenPasswordModal = (target: { id: string; email: string }) => {
     setPasswordModalUser({ userId: target.id, email: target.email });
     setNewPasswordInput('');
+    setConfirmPasswordInput('');
     setShowPasswordText(false);
+    setShowConfirmPasswordText(false);
   };
 
   const handleGenerateRandomPassword = () => {
@@ -328,14 +341,20 @@ export const AdminDashboard: React.FC = () => {
       pass += chars.charAt(Math.floor(Math.random() * chars.length));
     }
     setNewPasswordInput(pass);
+    setConfirmPasswordInput(pass);
     setShowPasswordText(true);
-    toast.info('Generated', 'Temporary secure password generated.');
+    setShowConfirmPasswordText(true);
+    toast.info('Generated', 'Temporary secure password generated and filled in both fields.');
   };
 
   const handleConfirmSetPassword = async () => {
     if (!passwordModalUser) return;
     if (!newPasswordInput || newPasswordInput.length < 8) {
       toast.error('Invalid Password', 'Password must be at least 8 characters long.');
+      return;
+    }
+    if (newPasswordInput !== confirmPasswordInput) {
+      toast.error('Passwords Do Not Match', 'Please enter the same password in both fields (2 times).');
       return;
     }
 
@@ -346,6 +365,7 @@ export const AdminDashboard: React.FC = () => {
         toast.success('Password Changed!', `New password has been set for ${passwordModalUser.email}`);
         setPasswordModalUser(null);
         setNewPasswordInput('');
+        setConfirmPasswordInput('');
         await loadData();
       } else {
         toast.error('Failed to Set Password', res.message);
@@ -2083,32 +2103,77 @@ export const AdminDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* Set Password Modal */}
+      {/* Set Password Modal (Requires 2 times password entry) */}
       {passwordModalUser && (
         <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full p-6 border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4">
-            <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">Set Account Password</h3>
-            <p className="text-xs text-slate-500">
-              Set a new secure password for <span className="font-bold text-slate-900 dark:text-slate-100">{passwordModalUser.email}</span>.
-            </p>
+            <div>
+              <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">Set Account Password</h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Target: <span className="font-bold text-slate-900 dark:text-slate-100">{passwordModalUser.email}</span> (Enter password 2 times)
+              </p>
+            </div>
 
             <div className="space-y-3">
-              <div className="relative">
-                <input
-                  type={showPasswordText ? 'text' : 'password'}
-                  placeholder="Enter new 8+ character password..."
-                  value={newPasswordInput}
-                  onChange={(e) => setNewPasswordInput(e.target.value)}
-                  className="w-full px-3 py-2 pr-10 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-mono"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPasswordText(!showPasswordText)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
-                >
-                  {showPasswordText ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
+              {/* Field 1 */}
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-500 mb-1">
+                  1. New Password (min 8 chars) *
+                </label>
+                <div className="relative">
+                  <input
+                    type={showPasswordText ? 'text' : 'password'}
+                    placeholder="Enter new password..."
+                    value={newPasswordInput}
+                    onChange={(e) => setNewPasswordInput(e.target.value)}
+                    className="w-full px-3 py-2 pr-10 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPasswordText(!showPasswordText)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
+                  >
+                    {showPasswordText ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
+
+              {/* Field 2 */}
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-500 mb-1">
+                  2. Re-enter Password (2nd time) *
+                </label>
+                <div className="relative">
+                  <input
+                    type={showConfirmPasswordText ? 'text' : 'password'}
+                    placeholder="Re-enter same password..."
+                    value={confirmPasswordInput}
+                    onChange={(e) => setConfirmPasswordInput(e.target.value)}
+                    className="w-full px-3 py-2 pr-10 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPasswordText(!showConfirmPasswordText)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
+                  >
+                    {showConfirmPasswordText ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              {/* Match indicator */}
+              {newPasswordInput && confirmPasswordInput && (
+                <div className="text-[11px] font-bold">
+                  {newPasswordInput === confirmPasswordInput ? (
+                    <span className="text-emerald-600 flex items-center gap-1">
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Passwords match</span>
+                    </span>
+                  ) : (
+                    <span className="text-rose-500">❌ Passwords do not match</span>
+                  )}
+                </div>
+              )}
 
               <button
                 type="button"
@@ -2116,7 +2181,7 @@ export const AdminDashboard: React.FC = () => {
                 className="text-xs text-indigo-600 dark:text-indigo-400 font-bold flex items-center gap-1 hover:underline"
               >
                 <Sparkles className="w-3.5 h-3.5" />
-                <span>Generate Random Strong Password</span>
+                <span>Auto-Generate Strong Password (Fills Both)</span>
               </button>
             </div>
 
@@ -2134,6 +2199,62 @@ export const AdminDashboard: React.FC = () => {
                 className="flex-1 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold shadow-md shadow-indigo-600/20 disabled:opacity-50"
               >
                 {isSettingPassword ? 'Setting...' : 'Confirm Set Password'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Password Reset Link Modal (For Admin to view and copy) */}
+      {resetLinkModalUser && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full p-6 border border-slate-200 dark:border-slate-800 shadow-2xl space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center">
+                <Send className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                  Password Reset Dispatched
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Target user: <span className="font-bold text-slate-900 dark:text-slate-100">{resetLinkModalUser.email}</span>
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 space-y-1">
+              <p className="text-[10px] text-slate-400 font-bold uppercase">Direct Password Reset Link:</p>
+              <p className="font-mono text-[11px] text-indigo-600 dark:text-indigo-400 break-all select-all">
+                {resetLinkModalUser.link}
+              </p>
+            </div>
+
+            <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+              An email was dispatched via Supabase Auth. You can also copy this direct link and send it to the user so they can set their new password (entering it 2 times).
+            </p>
+
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setResetLinkModalUser(null)}
+                className="flex-1 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold cursor-pointer"
+              >
+                Close
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(resetLinkModalUser.link);
+                  setCopiedResetLink(true);
+                  setTimeout(() => setCopiedResetLink(false), 2000);
+                  toast.success('Copied', 'Reset link copied to clipboard.');
+                }}
+                className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-md shadow-indigo-600/20 cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                {copiedResetLink ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                <span>{copiedResetLink ? 'Copied Link!' : 'Copy Reset Link'}</span>
               </button>
             </div>
           </div>
