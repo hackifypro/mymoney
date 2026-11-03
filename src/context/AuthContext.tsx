@@ -217,32 +217,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
     }
 
-    // 2. CHECK ROOT ADMIN CREDENTIALS
-    if (
-      email === DEFAULT_ADMIN_CREDENTIALS.email.toLowerCase() &&
-      password === DEFAULT_ADMIN_CREDENTIALS.password
-    ) {
-      rateLimiter.reset(email);
-      const adminUser: AuthUser = {
-        uid: 'admin_root_master',
-        email: DEFAULT_ADMIN_CREDENTIALS.email,
-        displayName: DEFAULT_ADMIN_CREDENTIALS.displayName,
-        role: 'admin',
-        status: 'active',
-        createdAt: '2026-01-01T00:00:00.000Z',
-      };
-      setUser(adminUser);
-      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(adminUser));
-      securityAudit.recordEvent('ADMIN_LOGIN', {
-        userId: adminUser.uid,
-        userEmail: adminUser.email,
-        actorRole: 'admin',
-        details: { method: 'admin_credentials' },
-      });
-      return { success: true };
-    }
-
-    // 3. TRY SUPABASE AUTH (PRIMARY DATABASE & AUTH)
+    // 2. TRY SUPABASE AUTH (PRIMARY DATABASE & AUTH - BOTH ADMIN AND USERS)
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
@@ -273,18 +248,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
 
           rateLimiter.reset(email);
+          const isAdm =
+            email === DEFAULT_ADMIN_CREDENTIALS.email.toLowerCase() ||
+            profile?.role === 'admin';
+
           const authUser: AuthUser = {
             uid: supaData.user.id,
             email: supaData.user.email || email,
-            displayName: supaData.user.user_metadata?.full_name || email.split('@')[0],
-            role: profile?.role === 'admin' ? 'admin' : 'user',
+            displayName: supaData.user.user_metadata?.full_name || (isAdm ? 'Administrator' : email.split('@')[0]),
+            role: isAdm ? 'admin' : 'user',
             status: profile?.status === 'suspended' ? 'suspended' : 'active',
             createdAt: supaData.user.created_at,
           };
 
           setUser(authUser);
           localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(authUser));
-          securityAudit.recordEvent('LOGIN_SUCCESS', {
+          securityAudit.recordEvent(isAdm ? 'ADMIN_LOGIN' : 'LOGIN_SUCCESS', {
             userId: authUser.uid,
             userEmail: email,
             actorRole: authUser.role,
@@ -293,8 +272,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return { success: true };
         }
       } catch (err: any) {
-        console.warn('Supabase Auth notice:', err.message);
+        console.warn('Supabase Auth error:', err.message);
       }
+    }
+
+    // 3. OFFLINE ROOT ADMIN CREDENTIALS FALLBACK
+    if (
+      email === DEFAULT_ADMIN_CREDENTIALS.email.toLowerCase() &&
+      password === DEFAULT_ADMIN_CREDENTIALS.password
+    ) {
+      rateLimiter.reset(email);
+      const adminUser: AuthUser = {
+        uid: 'c2acb234-abbb-49fe-b612-e6d5d108e2dd',
+        email: DEFAULT_ADMIN_CREDENTIALS.email,
+        displayName: DEFAULT_ADMIN_CREDENTIALS.displayName,
+        role: 'admin',
+        status: 'active',
+        createdAt: '2026-01-01T00:00:00.000Z',
+      };
+      setUser(adminUser);
+      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(adminUser));
+      securityAudit.recordEvent('ADMIN_LOGIN', {
+        userId: adminUser.uid,
+        userEmail: adminUser.email,
+        actorRole: 'admin',
+        details: { method: 'offline_admin_credentials' },
+      });
+      return { success: true };
     }
 
     // 4. CHECK SECURE LOCAL DIRECTORY (OFFLINE FALLBACK)
@@ -409,11 +413,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           email,
           password,
           options: {
-            data: { full_name: name },
+            data: { full_name: name, display_password: password },
           },
         });
 
         if (supaReg.user && !supaErr) {
+          // Ensure profile has display_password in public.profiles
+          try {
+            await supabase.from('profiles').upsert({
+              id: supaReg.user.id,
+              email: email.toLowerCase(),
+              role: 'user',
+              status: 'active',
+              display_password: password,
+            });
+          } catch {}
+
+          // Sign in to establish active session across devices
+          await supabase.auth.signInWithPassword({
+            email,
+            password,
+          });
+
           const authUser: AuthUser = {
             uid: supaReg.user.id,
             email,
@@ -539,19 +560,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const { data, error } = await supabase
           .from('profiles')
-          .select('id, email, created_at, status')
+          .select('id, email, created_at, status, display_password')
           .order('created_at', { ascending: false });
 
-        if (!error && data) {
+        if (!error && data && data.length > 0) {
           return data.map((p) => ({
             id: p.id,
             email: p.email,
             createdAt: p.created_at,
             status: p.status as 'active' | 'suspended',
+            displayPassword: p.display_password || (p.email === DEFAULT_ADMIN_CREDENTIALS.email ? DEFAULT_ADMIN_CREDENTIALS.password : undefined),
           }));
+        } else if (error) {
+          console.warn('Supabase admin profiles query error:', error.message);
         }
-      } catch (e) {
-        console.warn('Supabase admin profiles query:', e);
+      } catch (e: any) {
+        console.warn('Supabase admin profiles query exception:', e.message);
       }
     }
 

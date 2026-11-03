@@ -58,6 +58,7 @@ export interface AdminUserListItem {
   email: string;
   createdAt: string;
   status: 'active' | 'suspended';
+  displayPassword?: string;
 }
 
 export interface Transaction {

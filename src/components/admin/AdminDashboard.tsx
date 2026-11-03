@@ -70,6 +70,24 @@ export const AdminDashboard: React.FC = () => {
   } | null>(null);
   const [isDeletingUser, setIsDeletingUser] = useState<boolean>(false);
 
+  // Password visibility state in table
+  const [revealedPasswords, setRevealedPasswords] = useState<Record<string, boolean>>({});
+  const [copiedPassId, setCopiedPassId] = useState<string | null>(null);
+
+  const togglePasswordVisibility = (userId: string) => {
+    setRevealedPasswords((prev) => ({
+      ...prev,
+      [userId]: !prev[userId],
+    }));
+  };
+
+  const handleCopyPassword = (userId: string, pass: string) => {
+    navigator.clipboard.writeText(pass);
+    setCopiedPassId(userId);
+    setTimeout(() => setCopiedPassId(null), 2000);
+    toast.info('Copied', 'User password copied to clipboard.');
+  };
+
   const loadData = async () => {
     setIsLoading(true);
     try {
@@ -421,7 +439,7 @@ export const AdminDashboard: React.FC = () => {
               <tr>
                 <th className="py-3 px-4 font-bold">1. User ID (UUID)</th>
                 <th className="py-3 px-4 font-bold">2. Real Login Email / ID</th>
-                <th className="py-3 px-4 font-bold">3. Password Security</th>
+                <th className="py-3 px-4 font-bold">3. User Password</th>
                 <th className="py-3 px-4 font-bold">4. Account Creation Date</th>
                 <th className="py-3 px-4 font-bold">5. Account Status</th>
                 <th className="py-3 px-4 font-bold text-right">Actions</th>
@@ -463,15 +481,42 @@ export const AdminDashboard: React.FC = () => {
                         </span>
                       </td>
 
-                      {/* Field 3: Password Security Status */}
+                      {/* Field 3: User Password */}
                       <td className="py-3.5 px-4 whitespace-nowrap">
-                        <div className="flex items-center gap-1.5" title="Passwords are mathematically hashed with bcrypt. Plaintext passwords are never stored in the database.">
-                          <Lock className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                          <span className="font-mono text-[11px] text-slate-500 tracking-wider">••••••••••••</span>
-                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200/60 dark:border-emerald-800/40">
-                            Bcrypt Hashed
-                          </span>
-                        </div>
+                        {u.displayPassword ? (
+                          <div className="flex items-center gap-1.5 font-mono text-[11px]">
+                            <span className="font-bold text-slate-900 dark:text-slate-100 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700 tracking-wider">
+                              {revealedPasswords[u.id] ? u.displayPassword : '••••••••••••'}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => togglePasswordVisibility(u.id)}
+                              className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded cursor-pointer"
+                              title={revealedPasswords[u.id] ? "Hide Password" : "Show Password"}
+                            >
+                              {revealedPasswords[u.id] ? <EyeOff className="w-3.5 h-3.5 text-amber-600" /> : <Eye className="w-3.5 h-3.5 text-indigo-500" />}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleCopyPassword(u.id, u.displayPassword!)}
+                              className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 rounded cursor-pointer"
+                              title="Copy Password"
+                            >
+                              {copiedPassId === u.id ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1.5 font-mono text-[11px]">
+                            <span className="text-slate-400">••••••••</span>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenPasswordModal(u)}
+                              className="px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-200/60 dark:border-amber-800/40 text-[10px] font-bold hover:underline cursor-pointer"
+                            >
+                              Set Pass
+                            </button>
+                          </div>
+                        )}
                       </td>
 
                       {/* Field 4: Account Creation Date */}
