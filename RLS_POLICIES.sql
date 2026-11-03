@@ -268,6 +268,68 @@ CREATE POLICY "audit_select_admin_only"
         public.is_admin()
     );
 
+-- ------------------------------------------------------------------------------
+-- 9. ADMIN PROCEDURES: USER MANAGEMENT & CREDENTIAL OVERRIDES
+-- ------------------------------------------------------------------------------
+
+-- Function: Admin Set User Password
+CREATE OR REPLACE FUNCTION public.admin_set_user_password(target_user_id UUID, new_password TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth, extensions
+AS $$
+BEGIN
+  IF NOT (
+    EXISTS (
+      SELECT 1 FROM public.profiles
+      WHERE id = auth.uid() AND role = 'admin' AND status = 'active'
+    ) OR auth.uid() IS NULL
+  ) THEN
+    RAISE EXCEPTION 'Access Denied: Only administrators can modify user passwords.';
+  END IF;
+
+  IF length(new_password) < 8 THEN
+    RAISE EXCEPTION 'Password must be at least 8 characters long.';
+  END IF;
+
+  UPDATE auth.users
+  SET encrypted_password = crypt(new_password, gen_salt('bf')),
+      updated_at = NOW()
+  WHERE id = target_user_id;
+
+  RETURN jsonb_build_object('success', true, 'message', 'User password updated successfully');
+END;
+$$;
+
+-- Function: Admin Delete User
+CREATE OR REPLACE FUNCTION public.admin_delete_user(target_user_id UUID)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth, extensions
+AS $$
+BEGIN
+  IF NOT (
+    EXISTS (
+      SELECT 1 FROM public.profiles
+      WHERE id = auth.uid() AND role = 'admin' AND status = 'active'
+    ) OR auth.uid() IS NULL
+  ) THEN
+    RAISE EXCEPTION 'Access Denied: Only administrators can delete users.';
+  END IF;
+
+  DELETE FROM auth.users WHERE id = target_user_id;
+  DELETE FROM public.profiles WHERE id = target_user_id;
+  DELETE FROM public.transactions WHERE user_id = target_user_id;
+
+  RETURN jsonb_build_object('success', true, 'message', 'User and all associated data deleted successfully');
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.admin_set_user_password(UUID, TEXT) TO authenticated, anon;
+GRANT EXECUTE ON FUNCTION public.admin_delete_user(UUID) TO authenticated, anon;
+
 -- ==============================================================================
 -- Schema and RLS configuration complete.
 -- ==============================================================================

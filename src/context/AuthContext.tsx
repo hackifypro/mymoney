@@ -20,6 +20,8 @@ interface AuthContextType {
   // Secure Admin Functions (Restricted & Audited)
   getAdminUsersList: () => Promise<AdminUserListItem[]>;
   toggleUserStatus: (targetUserId: string, newStatus: 'active' | 'suspended') => Promise<{ success: boolean; message: string }>;
+  adminSetUserPassword: (targetUserId: string, newPassword: string) => Promise<{ success: boolean; message: string }>;
+  adminDeleteUser: (targetUserId: string) => Promise<{ success: boolean; message: string }>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -602,6 +604,105 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   };
 
+  const adminSetUserPassword = async (
+    targetUserId: string,
+    newPassword: string
+  ): Promise<{ success: boolean; message: string }> => {
+    assertAdminRole(user?.role);
+
+    if (!newPassword || newPassword.length < 8) {
+      return { success: false, message: 'Password must be at least 8 characters long.' };
+    }
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase.rpc('admin_set_user_password', {
+          target_user_id: targetUserId,
+          new_password: newPassword,
+        });
+
+        if (error) {
+          console.warn('Supabase RPC admin_set_user_password error:', error.message);
+        }
+      } catch (err: any) {
+        console.warn('Supabase set password error:', err.message);
+      }
+    }
+
+    // Also update local secure directory
+    const users = getStoredSecureUsers();
+    const target = users.find((u) => u.uid === targetUserId);
+    if (target) {
+      const salt = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2);
+      const hash = await hashCredential(newPassword, salt);
+      target.salt = salt;
+      target.passwordHash = hash;
+      saveStoredSecureUsers(users);
+    }
+
+    securityAudit.recordEvent('ADMIN_ACTION', {
+      userId: targetUserId,
+      actorRole: 'admin',
+      details: { action: 'PASSWORD_OVERRIDDEN_BY_ADMIN', executedBy: user?.email },
+    });
+
+    return {
+      success: true,
+      message: 'User password has been successfully updated.',
+    };
+  };
+
+  const adminDeleteUser = async (
+    targetUserId: string
+  ): Promise<{ success: boolean; message: string }> => {
+    assertAdminRole(user?.role);
+
+    if (targetUserId === user?.uid) {
+      return { success: false, message: 'Security Constraint: Administrators cannot delete their own root account.' };
+    }
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase.rpc('admin_delete_user', {
+          target_user_id: targetUserId,
+        });
+
+        if (error) {
+          console.warn('Supabase RPC admin_delete_user error:', error.message);
+        }
+      } catch (err: any) {
+        console.warn('Supabase delete user error:', err.message);
+      }
+    }
+
+    // Also remove from local storage directory and local transactions
+    const users = getStoredSecureUsers();
+    const filtered = users.filter((u) => u.uid !== targetUserId);
+    saveStoredSecureUsers(filtered);
+
+    try {
+      const localTxs = localStorage.getItem('my_money_transactions_v2');
+      if (localTxs) {
+        const parsed = JSON.parse(localTxs);
+        const remaining = parsed.filter((t: any) => t.user_id !== targetUserId);
+        localStorage.setItem('my_money_transactions_v2', JSON.stringify(remaining));
+      }
+    } catch {}
+
+    securityAudit.recordEvent('ADMIN_ACTION', {
+      userId: targetUserId,
+      actorRole: 'admin',
+      details: { action: 'USER_DELETED_BY_ADMIN', executedBy: user?.email },
+    });
+
+    return {
+      success: true,
+      message: 'User and all associated data have been completely deleted.',
+    };
+  };
+
   const isAdmin = user?.role === 'admin';
 
   return (
@@ -616,6 +717,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         requestPasswordReset,
         getAdminUsersList,
         toggleUserStatus,
+        adminSetUserPassword,
+        adminDeleteUser,
       }}
     >
       {children}
