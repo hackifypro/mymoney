@@ -1,14 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { AuthUser, AdminUserListItem } from '../types';
-import { auth } from '../lib/firebase';
-import {
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  signOut as fbSignOut,
-  onAuthStateChanged,
-  updateProfile,
-  sendPasswordResetEmail,
-} from 'firebase/auth';
 import { getSupabaseClient } from '../lib/supabase';
 import {
   validatePasswordStrength,
@@ -37,7 +28,7 @@ const AUTH_STORAGE_KEY = 'my_money_auth_session';
 // NOTE: We NEVER store plaintext passwords. Stored users only contain hashed verifiers.
 const SECURE_USER_DIRECTORY_KEY = 'my_money_sec_user_dir';
 
-// Standard Enterprise Admin Credentials (conforms to 12+ char policy)
+// Standard Enterprise Admin Credentials
 export const DEFAULT_ADMIN_CREDENTIALS = {
   email: 'admin@mymoney.com',
   password: 'Admin@Sec2026!Master',
@@ -111,102 +102,96 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     initAdmin();
   }, [getStoredSecureUsers, saveStoredSecureUsers]);
 
-  // Restore authenticated session on startup
+  // Restore authenticated session on startup (Supabase Auth Primary)
   useEffect(() => {
-    // 1. Try Supabase Auth session first
+    let isMounted = true;
     const supabase = getSupabaseClient();
     let supaSubscription: { unsubscribe: () => void } | undefined;
 
     if (supabase) {
-      supabase.auth.getSession().then(({ data: { session } }) => {
-        if (session?.user && session.user.email) {
-          const isAdminUser = session.user.email.toLowerCase() === DEFAULT_ADMIN_CREDENTIALS.email.toLowerCase();
+      // 1. Get active session from Supabase
+      supabase.auth.getSession().then(({ data: { session }, error }) => {
+        if (!isMounted) return;
+        if (session?.user && session.user.email && !error) {
+          const isAdm = session.user.email.toLowerCase() === DEFAULT_ADMIN_CREDENTIALS.email.toLowerCase();
           const activeUser: AuthUser = {
             uid: session.user.id,
             email: session.user.email,
-            displayName: session.user.user_metadata?.full_name || (isAdminUser ? 'Administrator' : session.user.email.split('@')[0]),
-            role: isAdminUser ? 'admin' : 'user',
+            displayName: session.user.user_metadata?.full_name || (isAdm ? 'Administrator' : session.user.email.split('@')[0]),
+            role: isAdm ? 'admin' : 'user',
             status: 'active',
             createdAt: session.user.created_at,
           };
           setUser(activeUser);
           localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(activeUser));
           setIsLoading(false);
+        } else {
+          // Check local stored session fallback
+          checkLocalSession();
         }
       });
 
-      const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      // 2. Realtime auth state listener
+      const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+        if (!isMounted) return;
         if (session?.user && session.user.email) {
-          const isAdminUser = session.user.email.toLowerCase() === DEFAULT_ADMIN_CREDENTIALS.email.toLowerCase();
+          const isAdm = session.user.email.toLowerCase() === DEFAULT_ADMIN_CREDENTIALS.email.toLowerCase();
           const activeUser: AuthUser = {
             uid: session.user.id,
             email: session.user.email,
-            displayName: session.user.user_metadata?.full_name || (isAdminUser ? 'Administrator' : session.user.email.split('@')[0]),
-            role: isAdminUser ? 'admin' : 'user',
+            displayName: session.user.user_metadata?.full_name || (isAdm ? 'Administrator' : session.user.email.split('@')[0]),
+            role: isAdm ? 'admin' : 'user',
             status: 'active',
             createdAt: session.user.created_at,
           };
           setUser(activeUser);
           localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(activeUser));
+          setIsLoading(false);
+        } else if (event === 'SIGNED_OUT') {
+          setUser(null);
+          localStorage.removeItem(AUTH_STORAGE_KEY);
           setIsLoading(false);
         }
       });
       supaSubscription = subscription;
+    } else {
+      checkLocalSession();
     }
 
-    // 2. Try Firebase Auth state listener
-    const unsubscribeFirebase = onAuthStateChanged(auth, (firebaseUser) => {
-      if (firebaseUser && firebaseUser.email && !supabase) {
-        const isAdminUser = firebaseUser.email.toLowerCase() === DEFAULT_ADMIN_CREDENTIALS.email.toLowerCase();
-        const activeUser: AuthUser = {
-          uid: firebaseUser.uid,
-          email: firebaseUser.email,
-          displayName: firebaseUser.displayName || (isAdminUser ? 'Administrator' : firebaseUser.email.split('@')[0]),
-          role: isAdminUser ? 'admin' : 'user',
-          status: 'active',
-          createdAt: firebaseUser.metadata.creationTime || new Date().toISOString(),
-        };
-        setUser(activeUser);
-        localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(activeUser));
-        setIsLoading(false);
-      } else if (!supabase) {
-        // 3. Check local secure session storage
-        const savedSession = localStorage.getItem(AUTH_STORAGE_KEY);
-        if (savedSession) {
-          try {
-            const parsed = JSON.parse(savedSession);
-            // Verify account is not suspended
-            const users = getStoredSecureUsers();
-            const matched = users.find((u) => u.uid === parsed.uid || u.email.toLowerCase() === parsed.email.toLowerCase());
-            if (matched && matched.status === 'suspended') {
-              // Forced logout for suspended user
-              securityAudit.recordEvent('ACCESS_DENIED', {
-                userId: parsed.uid,
-                userEmail: parsed.email,
-                actorRole: parsed.role,
-                details: { reason: 'ACCOUNT_SUSPENDED_ON_RESTORE' },
-              });
-              setUser(null);
-              localStorage.removeItem(AUTH_STORAGE_KEY);
-            } else {
-              setUser(parsed);
-            }
-          } catch {
+    function checkLocalSession() {
+      const savedSession = localStorage.getItem(AUTH_STORAGE_KEY);
+      if (savedSession) {
+        try {
+          const parsed = JSON.parse(savedSession);
+          const users = getStoredSecureUsers();
+          const matched = users.find((u) => u.uid === parsed.uid || u.email.toLowerCase() === parsed.email.toLowerCase());
+          if (matched && matched.status === 'suspended') {
+            securityAudit.recordEvent('ACCESS_DENIED', {
+              userId: parsed.uid,
+              userEmail: parsed.email,
+              actorRole: parsed.role,
+              details: { reason: 'ACCOUNT_SUSPENDED_ON_RESTORE' },
+            });
             setUser(null);
+            localStorage.removeItem(AUTH_STORAGE_KEY);
+          } else {
+            setUser(parsed);
           }
+        } catch {
+          setUser(null);
         }
-        setIsLoading(false);
       }
-    });
+      setIsLoading(false);
+    }
 
     return () => {
+      isMounted = false;
       if (supaSubscription) supaSubscription.unsubscribe();
-      unsubscribeFirebase();
     };
   }, [getStoredSecureUsers]);
 
   // -------------------------------------------------------------
-  // LOGIN IMPLEMENTATION (WITH RATE LIMITING & BRUTE FORCE DEFENSE)
+  // LOGIN IMPLEMENTATION (SUPABASE AUTH WITH RATE LIMITING)
   // -------------------------------------------------------------
   const login = async (emailInput: string, passwordInput: string): Promise<{ success: boolean; message?: string }> => {
     const email = sanitizeInput(emailInput).toLowerCase();
@@ -255,7 +240,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: true };
     }
 
-    // 3. TRY SUPABASE AUTH FIRST IF CONFIGURED
+    // 3. TRY SUPABASE AUTH (PRIMARY DATABASE & AUTH)
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
@@ -265,7 +250,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
 
         if (supaData?.user && !supaErr) {
-          // Check profile status
+          // Check profile status from PostgreSQL profiles table
           const { data: profile } = await supabase
             .from('profiles')
             .select('role, status')
@@ -306,93 +291,66 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return { success: true };
         }
       } catch (err: any) {
-        console.warn('Supabase Auth attempt note:', err.message);
+        console.warn('Supabase Auth notice:', err.message);
       }
     }
 
-    // 4. TRY FIREBASE AUTH
-    try {
-      const cred = await signInWithEmailAndPassword(auth, email, password);
-      const isAdm = cred.user.email?.toLowerCase() === DEFAULT_ADMIN_CREDENTIALS.email.toLowerCase();
-      const authUser: AuthUser = {
-        uid: cred.user.uid,
-        email: cred.user.email || email,
-        displayName: cred.user.displayName || email.split('@')[0],
-        role: isAdm ? 'admin' : 'user',
-        status: 'active',
-        createdAt: cred.user.metadata.creationTime || new Date().toISOString(),
-      };
+    // 4. CHECK SECURE LOCAL DIRECTORY (OFFLINE FALLBACK)
+    const storedUsers = getStoredSecureUsers();
+    const matched = storedUsers.find((u) => u.email.toLowerCase() === email);
 
-      rateLimiter.reset(email);
-      setUser(authUser);
-      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(authUser));
-      securityAudit.recordEvent('LOGIN_SUCCESS', {
-        userId: authUser.uid,
-        userEmail: email,
-        actorRole: authUser.role,
-        details: { provider: 'firebase' },
-      });
-      return { success: true };
-    } catch {
-      // 5. CHECK SECURE LOCAL DIRECTORY (HASH VERIFICATION)
-      const storedUsers = getStoredSecureUsers();
-      const matched = storedUsers.find((u) => u.email.toLowerCase() === email);
-
-      if (matched) {
-        // Verify hashed password
-        const computedHash = await hashCredential(password, matched.salt);
-        if (computedHash === matched.passwordHash) {
-          // Check if suspended
-          if (matched.status === 'suspended') {
-            securityAudit.recordEvent('LOGIN_FAILURE', {
-              userId: matched.uid,
-              userEmail: email,
-              details: { reason: 'ACCOUNT_SUSPENDED' },
-            });
-            return {
-              success: false,
-              message: 'Access Denied: This account is currently suspended. Contact support.',
-            };
-          }
-
-          rateLimiter.reset(email);
-          const localAuthUser: AuthUser = {
-            uid: matched.uid,
-            email: matched.email,
-            displayName: matched.name,
-            role: matched.role,
-            status: matched.status,
-            createdAt: matched.createdAt,
-          };
-          setUser(localAuthUser);
-          localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(localAuthUser));
-          securityAudit.recordEvent('LOGIN_SUCCESS', {
-            userId: localAuthUser.uid,
+    if (matched) {
+      const computedHash = await hashCredential(password, matched.salt);
+      if (computedHash === matched.passwordHash) {
+        if (matched.status === 'suspended') {
+          securityAudit.recordEvent('LOGIN_FAILURE', {
+            userId: matched.uid,
             userEmail: email,
-            actorRole: localAuthUser.role,
-            details: { provider: 'secure_local_vault' },
+            details: { reason: 'ACCOUNT_SUSPENDED' },
           });
-          return { success: true };
+          return {
+            success: false,
+            message: 'Access Denied: This account is currently suspended. Contact support.',
+          };
         }
+
+        rateLimiter.reset(email);
+        const localAuthUser: AuthUser = {
+          uid: matched.uid,
+          email: matched.email,
+          displayName: matched.name,
+          role: matched.role,
+          status: matched.status,
+          createdAt: matched.createdAt,
+        };
+        setUser(localAuthUser);
+        localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(localAuthUser));
+        securityAudit.recordEvent('LOGIN_SUCCESS', {
+          userId: localAuthUser.uid,
+          userEmail: email,
+          actorRole: localAuthUser.role,
+          details: { provider: 'secure_local_vault' },
+        });
+        return { success: true };
       }
-
-      // Record failed attempt in rate limiter and audit trail
-      const failureResult = rateLimiter.recordFailure(email);
-      securityAudit.recordEvent('LOGIN_FAILURE', {
-        userEmail: email,
-        actorRole: 'anonymous',
-        details: { attemptsRemaining: failureResult.remainingAttempts },
-      });
-
-      return {
-        success: false,
-        message: failureResult.message || 'Invalid email or password.',
-      };
     }
+
+    // Record failed attempt in rate limiter and audit trail
+    const failureResult = rateLimiter.recordFailure(email);
+    securityAudit.recordEvent('LOGIN_FAILURE', {
+      userEmail: email,
+      actorRole: 'anonymous',
+      details: { attemptsRemaining: failureResult.remainingAttempts },
+    });
+
+    return {
+      success: false,
+      message: failureResult.message || 'Invalid email or password.',
+    };
   };
 
   // -------------------------------------------------------------
-  // REGISTRATION IMPLEMENTATION (STRONG PASSWORD POLICY ENFORCED)
+  // REGISTRATION IMPLEMENTATION (SUPABASE AUTH)
   // -------------------------------------------------------------
   const register = async (
     nameInput: string,
@@ -411,7 +369,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: false, message: 'Please provide a valid email address.' };
     }
 
-    // MANDATORY STRONG PASSWORD POLICY CHECK (12+ CHARACTERS, COMPLEXITY)
+    // PASSWORD STRENGTH POLICY CHECK (8+ CHARACTERS, COMPLEXITY)
     const strength = validatePasswordStrength(password);
     if (!strength.isValid) {
       securityAudit.recordEvent('VALIDATION_FAILURE', {
@@ -420,7 +378,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       return {
         success: false,
-        message: 'Password does not meet enterprise security requirements.',
+        message: 'Password does not meet security requirements.',
         errors: strength.errors,
       };
     }
@@ -441,7 +399,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       : 'usr_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8);
     const nowIso = new Date().toISOString();
 
-    // 1. Try Supabase Auth
+    // 1. Register with Supabase Auth (Primary)
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
@@ -471,72 +429,52 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             details: { action: 'ACCOUNT_REGISTERED_SUPABASE' },
           });
           return { success: true };
+        } else if (supaErr) {
+          return { success: false, message: supaErr.message };
         }
-      } catch (err) {
-        console.warn('Supabase registration fallback:', err);
+      } catch (err: any) {
+        console.warn('Supabase registration error:', err);
+        return { success: false, message: err.message || 'Registration failed.' };
       }
     }
 
-    // 2. Try Firebase Auth
-    try {
-      const cred = await createUserWithEmailAndPassword(auth, email, password);
-      await updateProfile(cred.user, { displayName: name });
-      const authUser: AuthUser = {
-        uid: cred.user.uid,
-        email,
-        displayName: name,
-        role: 'user',
-        status: 'active',
-        createdAt: nowIso,
-      };
-      setUser(authUser);
-      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(authUser));
-      securityAudit.recordEvent('LOGIN_SUCCESS', {
-        userId: authUser.uid,
-        userEmail: email,
-        actorRole: 'user',
-        details: { action: 'ACCOUNT_REGISTERED_FIREBASE' },
-      });
-      return { success: true };
-    } catch {
-      // 3. Fallback: Save to Secure Vault (STORE ONLY SALT & HASH, NEVER PLAINTEXT!)
-      const salt = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2);
-      const hash = await hashCredential(password, salt);
+    // 2. Offline fallback: Save to Secure Vault (salted SHA-256 hash)
+    const salt = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2);
+    const hash = await hashCredential(password, salt);
 
-      existingUsers.push({
-        uid: newUid,
-        email,
-        name,
-        salt,
-        passwordHash: hash, // Salted SHA-256 hash
-        role: 'user',
-        status: 'active',
-        createdAt: nowIso,
-      });
-      saveStoredSecureUsers(existingUsers);
+    existingUsers.push({
+      uid: newUid,
+      email,
+      name,
+      salt,
+      passwordHash: hash,
+      role: 'user',
+      status: 'active',
+      createdAt: nowIso,
+    });
+    saveStoredSecureUsers(existingUsers);
 
-      const authUser: AuthUser = {
-        uid: newUid,
-        email,
-        displayName: name,
-        role: 'user',
-        status: 'active',
-        createdAt: nowIso,
-      };
-      setUser(authUser);
-      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(authUser));
-      securityAudit.recordEvent('LOGIN_SUCCESS', {
-        userId: authUser.uid,
-        userEmail: email,
-        actorRole: 'user',
-        details: { action: 'ACCOUNT_REGISTERED_LOCAL_SECURE' },
-      });
-      return { success: true };
-    }
+    const authUser: AuthUser = {
+      uid: newUid,
+      email,
+      displayName: name,
+      role: 'user',
+      status: 'active',
+      createdAt: nowIso,
+    };
+    setUser(authUser);
+    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(authUser));
+    securityAudit.recordEvent('LOGIN_SUCCESS', {
+      userId: authUser.uid,
+      userEmail: email,
+      actorRole: 'user',
+      details: { action: 'ACCOUNT_REGISTERED_LOCAL_SECURE' },
+    });
+    return { success: true };
   };
 
   // -------------------------------------------------------------
-  // PASSWORD RESET (VERIFIED EMAIL PROTOCOL)
+  // PASSWORD RESET (SUPABASE AUTH)
   // -------------------------------------------------------------
   const requestPasswordReset = async (emailInput: string): Promise<{ success: boolean; message: string }> => {
     const email = sanitizeInput(emailInput).toLowerCase();
@@ -550,7 +488,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       details: { requestedAt: new Date().toISOString() },
     });
 
-    // Try Supabase Auth
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
@@ -564,24 +501,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } catch {}
     }
 
-    // Try Firebase Auth
-    try {
-      await sendPasswordResetEmail(auth, email);
-      return {
-        success: true,
-        message: 'Password reset link sent to your registered email address.',
-      };
-    } catch {
-      // Return neutral message to prevent user enumeration
-      return {
-        success: true,
-        message: 'If an account exists for this email, password reset instructions have been dispatched.',
-      };
-    }
+    return {
+      success: true,
+      message: 'If an account exists for this email, password reset instructions have been dispatched.',
+    };
   };
 
   // -------------------------------------------------------------
-  // LOGOUT
+  // LOGOUT (SUPABASE AUTH)
   // -------------------------------------------------------------
   const logout = async () => {
     if (user) {
@@ -594,7 +521,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const supabase = getSupabaseClient();
       if (supabase) await supabase.auth.signOut();
-      await fbSignOut(auth);
     } catch {}
     setUser(null);
     localStorage.removeItem(AUTH_STORAGE_KEY);
@@ -603,12 +529,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // -------------------------------------------------------------
   // ADMIN DASHBOARD RESTRICTED FUNCTIONS (ROLE PROTECTED)
   // -------------------------------------------------------------
-  // Mandated: Displays ONLY 1. User ID, 2. Email, 3. Created At, 4. Status
-  // STUFF NEVER RETURNED: Passwords, password hashes, transactions, tokens.
   const getAdminUsersList = async (): Promise<AdminUserListItem[]> => {
     assertAdminRole(user?.role);
 
-    // 1. If Supabase configured, query profiles
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
@@ -630,7 +553,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
 
-    // 2. Query secure vault profiles
     const users = getStoredSecureUsers();
     return users.map((u) => ({
       id: u.uid,
@@ -650,7 +572,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: false, message: 'Security Constraint: Administrators cannot suspend their own root account.' };
     }
 
-    // Update in Supabase if active
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
@@ -661,7 +582,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } catch {}
     }
 
-    // Update in local directory
     const users = getStoredSecureUsers();
     const target = users.find((u) => u.uid === targetUserId);
     if (target) {

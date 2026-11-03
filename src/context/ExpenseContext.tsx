@@ -14,12 +14,6 @@ import {
   deleteTransactionFromSupabase,
   subscribeToSupabaseTransactions,
 } from '../lib/supabase';
-import {
-  saveTransactionToFirestore,
-  updateTransactionInFirestore,
-  deleteTransactionFromFirestore,
-  fetchTransactionsFromFirestore,
-} from '../lib/firebase';
 import { getCurrentISTDate, getCurrentISTTime, getPresetDateRange } from '../lib/dateUtils';
 import { useAuth } from './AuthContext';
 import {
@@ -45,7 +39,6 @@ interface ExpenseContextType {
   clearAllTransactions: () => Promise<void>;
   refreshTransactions: () => Promise<void>;
   isSupabaseConnected: boolean;
-  isFirebaseConnected: boolean;
 }
 
 const ExpenseContext = createContext<ExpenseContextType | undefined>(undefined);
@@ -68,7 +61,6 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [isSupabaseConnected, setIsSupabaseConnected] = useState<boolean>(false);
-  const [isFirebaseConnected, setIsFirebaseConnected] = useState<boolean>(false);
 
   const [filterOptions, setFilterOptions] = useState<FilterOptions>({
     searchQuery: '',
@@ -93,7 +85,6 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setIsLoading(true);
     setError(null);
 
-    // 1. Try Supabase Database first (Primary)
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
@@ -106,29 +97,18 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
           return;
         }
       } catch (supaErr: any) {
-        console.warn('Supabase fetch notice, trying fallback:', supaErr.message);
+        console.warn('Supabase fetch notice, using local cache:', supaErr.message);
       }
     }
 
-    // 2. Try Firebase Firestore fallback if Supabase credentials are not connected yet
-    try {
-      const firestoreData = await fetchTransactionsFromFirestore();
-      if (firestoreData && firestoreData.length > 0) {
-        setAllTransactions(firestoreData);
-        persistLocally(firestoreData);
-        setIsFirebaseConnected(true);
-      }
-    } catch (fbErr: any) {
-      // 3. Fallback to cached local storage
-      const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
-      if (saved) {
-        try {
-          setAllTransactions(JSON.parse(saved));
-        } catch {}
-      }
-    } finally {
-      setIsLoading(false);
+    // Fallback to cached local storage
+    const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+    if (saved) {
+      try {
+        setAllTransactions(JSON.parse(saved));
+      } catch {}
     }
+    setIsLoading(false);
   }, [user]);
 
   // Initial load and real-time subscription
@@ -206,7 +186,7 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
       return updated;
     });
 
-    // 1. Save to Supabase (Primary Database)
+    // Save to Supabase (Primary Database)
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
@@ -216,11 +196,6 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
         console.warn('Supabase save notice, cached locally:', err.message);
       }
     }
-
-    // 2. Secondary backup save to Firestore if configured
-    try {
-      await saveTransactionToFirestore(newTx);
-    } catch {}
 
     return newTx;
   };
@@ -274,7 +249,7 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
       return updated;
     });
 
-    // 1. Update in Supabase (Primary)
+    // Update in Supabase (Primary)
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
@@ -284,11 +259,6 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
         console.warn('Supabase update notice, cached locally:', err.message);
       }
     }
-
-    // 2. Secondary update in Firestore
-    try {
-      await updateTransactionInFirestore(id, updatedTx);
-    } catch {}
 
     return updatedTx;
   };
@@ -311,7 +281,7 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
       return updated;
     });
 
-    // 1. Delete in Supabase (Primary)
+    // Delete in Supabase (Primary)
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
@@ -321,11 +291,6 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
         console.warn('Supabase delete notice, cached locally:', err.message);
       }
     }
-
-    // 2. Secondary delete in Firestore
-    try {
-      await deleteTransactionFromFirestore(id);
-    } catch {}
 
     return true;
   };
@@ -338,9 +303,6 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
           await deleteTransactionFromSupabase(t.id);
         } catch {}
       }
-      try {
-        await deleteTransactionFromFirestore(t.id);
-      } catch {}
     }
     setAllTransactions((prev) => prev.filter((t) => !userTransactions.some((ut) => ut.id === t.id)));
   };
@@ -549,7 +511,6 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
         clearAllTransactions,
         refreshTransactions,
         isSupabaseConnected,
-        isFirebaseConnected,
       }}
     >
       {children}
