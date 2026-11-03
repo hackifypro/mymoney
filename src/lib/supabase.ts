@@ -166,10 +166,13 @@ export async function saveTransactionToSupabase(tx: Transaction): Promise<Transa
   const client = getSupabaseClient();
   if (!client) throw new Error('Supabase client is not configured.');
 
+  // Validate UUID or let Postgres gen_random_uuid() generate it
+  const isValidUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tx.id);
+
   const payload: Record<string, any> = {
-    id: tx.id,
+    ...(isValidUuid ? { id: tx.id } : {}),
     user_id: tx.user_id,
-    user_email: tx.user_email,
+    user_email: tx.user_email || null,
     category: tx.category,
     subcategory: tx.subcategory,
     transaction_type: tx.transaction_type,
@@ -184,8 +187,8 @@ export async function saveTransactionToSupabase(tx: Transaction): Promise<Transa
     is_deleted: Boolean(tx.is_deleted),
     deleted_at: tx.deleted_at || null,
     deleted_by: tx.deleted_by || null,
-    created_at: tx.created_at,
-    updated_at: tx.updated_at,
+    created_at: tx.created_at || new Date().toISOString(),
+    updated_at: tx.updated_at || new Date().toISOString(),
   };
 
   const { data, error } = await client.from('transactions').upsert(payload).select().single();
@@ -197,6 +200,7 @@ export async function saveTransactionToSupabase(tx: Transaction): Promise<Transa
   return {
     ...tx,
     id: data?.id || tx.id,
+    user_email: data?.user_email || tx.user_email,
     created_at: data?.created_at || tx.created_at,
     updated_at: data?.updated_at || tx.updated_at,
   };
@@ -218,15 +222,15 @@ export async function updateTransactionInSupabase(
   if (updates.transaction_type !== undefined) payload.transaction_type = updates.transaction_type;
   if (updates.amount !== undefined) payload.amount = updates.amount;
   if (updates.title !== undefined) payload.title = updates.title;
-  if (updates.description !== undefined) payload.description = updates.description;
-  if (updates.person_name !== undefined) payload.person_name = updates.person_name;
+  if (updates.description !== undefined) payload.description = updates.description || null;
+  if (updates.person_name !== undefined) payload.person_name = updates.person_name || null;
   if (updates.transaction_date !== undefined) payload.transaction_date = updates.transaction_date;
   if (updates.transaction_time !== undefined) payload.transaction_time = updates.transaction_time;
-  if (updates.notes !== undefined) payload.notes = updates.notes;
+  if (updates.notes !== undefined) payload.notes = updates.notes || null;
   if (updates.metadata !== undefined) payload.metadata = updates.metadata;
   if (updates.is_deleted !== undefined) payload.is_deleted = updates.is_deleted;
-  if (updates.deleted_at !== undefined) payload.deleted_at = updates.deleted_at;
-  if (updates.deleted_by !== undefined) payload.deleted_by = updates.deleted_by;
+  if (updates.deleted_at !== undefined) payload.deleted_at = updates.deleted_at || null;
+  if (updates.deleted_by !== undefined) payload.deleted_by = updates.deleted_by || null;
 
   const { error } = await client.from('transactions').update(payload).eq('id', id);
   if (error) {

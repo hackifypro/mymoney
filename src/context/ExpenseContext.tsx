@@ -113,6 +113,18 @@ const DEFAULT_BRANDING: AppBrandingSettings = {
   allowLogin: true,
 };
 
+// RFC 4122 compliant UUID v4 generator
+function generateSecureUUID(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, isAdmin } = useAuth();
 
@@ -185,24 +197,13 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        // If user is Admin, fetch all transactions (including for other users) with includeDeleted: true
-        // If normal user, fetch only user's own transactions with includeDeleted: false
-        const targetUserId = isAdmin ? undefined : user?.uid;
-        const supaData = await fetchTransactionsFromSupabase(targetUserId, isAdmin);
-        if (supaData) {
-          setAllTransactions(supaData);
-          persistLocally(supaData);
-          setIsSupabaseConnected(true);
-        }
-
-        // Fetch dynamic sections
+        // Fetch public metadata (sections, maintenance, branding, notifications)
         const sectionsData = await fetchSectionsFromSupabase();
         if (sectionsData && sectionsData.length > 0) {
           setDynamicSections(sectionsData);
           localStorage.setItem(LOCAL_SECTIONS_KEY, JSON.stringify(sectionsData));
         }
 
-        // Fetch app maintenance mode & branding
         const maint = await fetchAppSettingFromSupabase<MaintenanceSettings>('maintenance_mode');
         if (maint) {
           setMaintenanceSettings(maint);
@@ -215,9 +216,51 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
           localStorage.setItem(LOCAL_BRANDING_KEY, JSON.stringify(brand));
         }
 
-        // Fetch notifications
         const notifs = await fetchNotificationsFromSupabase();
         setNotifications(notifs);
+
+        // TRANSACTION SYNC: Only proceed if user session is loaded
+        if (!user) {
+          setIsLoading(false);
+          return;
+        }
+
+        // Fetch user's transactions from Supabase (including soft-deleted for recycle bin)
+        const targetUserId = isAdmin ? undefined : user.uid;
+        const supaData = await fetchTransactionsFromSupabase(targetUserId, true);
+
+        if (Array.isArray(supaData)) {
+          // Check local storage for any pending transactions created by this user not yet in cloud
+          const localSaved = localStorage.getItem(LOCAL_STORAGE_KEY);
+          let localTxs: Transaction[] = [];
+          if (localSaved) {
+            try {
+              localTxs = JSON.parse(localSaved);
+            } catch {}
+          }
+
+          const unsynced = localTxs.filter(
+            (lt) =>
+              (lt.user_id === user.uid || (lt.user_email && lt.user_email.toLowerCase() === user.email.toLowerCase())) &&
+              !supaData.some((st) => st.id === lt.id)
+          );
+
+          if (unsynced.length > 0) {
+            for (const pendingTx of unsynced) {
+              try {
+                const saved = await saveTransactionToSupabase(pendingTx);
+                supaData.unshift(saved);
+              } catch (e) {
+                console.warn('Could not auto-sync pending tx to Supabase:', e);
+                supaData.unshift(pendingTx);
+              }
+            }
+          }
+
+          setAllTransactions(supaData);
+          persistLocally(supaData);
+          setIsSupabaseConnected(true);
+        }
 
         setIsLoading(false);
         return;
@@ -299,9 +342,7 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     const clean = validation.sanitizedPayload;
     const nowIso = new Date().toISOString();
-    const newId = crypto.randomUUID
-      ? crypto.randomUUID()
-      : 'tx_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
+    const newId = generateSecureUUID();
 
     const newTx: Transaction = {
       id: newId,
@@ -332,8 +373,13 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        await saveTransactionToSupabase(newTx);
+        const saved = await saveTransactionToSupabase(newTx);
         setIsSupabaseConnected(true);
+        setAllTransactions((prev) => {
+          const updated = prev.map((t) => (t.id === newTx.id ? { ...saved, user_email: user.email } : t));
+          persistLocally(updated);
+          return updated;
+        });
       } catch (err: any) {
         console.warn('Supabase save notice, cached locally:', err.message);
       }
