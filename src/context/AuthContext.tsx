@@ -113,9 +113,50 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Restore authenticated session on startup
   useEffect(() => {
-    // 1. Try Firebase Auth state listener
-    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
-      if (firebaseUser && firebaseUser.email) {
+    // 1. Try Supabase Auth session first
+    const supabase = getSupabaseClient();
+    let supaSubscription: { unsubscribe: () => void } | undefined;
+
+    if (supabase) {
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (session?.user && session.user.email) {
+          const isAdminUser = session.user.email.toLowerCase() === DEFAULT_ADMIN_CREDENTIALS.email.toLowerCase();
+          const activeUser: AuthUser = {
+            uid: session.user.id,
+            email: session.user.email,
+            displayName: session.user.user_metadata?.full_name || (isAdminUser ? 'Administrator' : session.user.email.split('@')[0]),
+            role: isAdminUser ? 'admin' : 'user',
+            status: 'active',
+            createdAt: session.user.created_at,
+          };
+          setUser(activeUser);
+          localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(activeUser));
+          setIsLoading(false);
+        }
+      });
+
+      const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+        if (session?.user && session.user.email) {
+          const isAdminUser = session.user.email.toLowerCase() === DEFAULT_ADMIN_CREDENTIALS.email.toLowerCase();
+          const activeUser: AuthUser = {
+            uid: session.user.id,
+            email: session.user.email,
+            displayName: session.user.user_metadata?.full_name || (isAdminUser ? 'Administrator' : session.user.email.split('@')[0]),
+            role: isAdminUser ? 'admin' : 'user',
+            status: 'active',
+            createdAt: session.user.created_at,
+          };
+          setUser(activeUser);
+          localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(activeUser));
+          setIsLoading(false);
+        }
+      });
+      supaSubscription = subscription;
+    }
+
+    // 2. Try Firebase Auth state listener
+    const unsubscribeFirebase = onAuthStateChanged(auth, (firebaseUser) => {
+      if (firebaseUser && firebaseUser.email && !supabase) {
         const isAdminUser = firebaseUser.email.toLowerCase() === DEFAULT_ADMIN_CREDENTIALS.email.toLowerCase();
         const activeUser: AuthUser = {
           uid: firebaseUser.uid,
@@ -128,8 +169,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setUser(activeUser);
         localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(activeUser));
         setIsLoading(false);
-      } else {
-        // 2. Check local secure session storage
+      } else if (!supabase) {
+        // 3. Check local secure session storage
         const savedSession = localStorage.getItem(AUTH_STORAGE_KEY);
         if (savedSession) {
           try {
@@ -158,7 +199,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     });
 
-    return () => unsubscribe();
+    return () => {
+      if (supaSubscription) supaSubscription.unsubscribe();
+      unsubscribeFirebase();
+    };
   }, [getStoredSecureUsers]);
 
   // -------------------------------------------------------------

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useMemo } from 'react';
+import React, { createContext, useContext, useEffect, useState, useMemo, useCallback } from 'react';
 import {
   Transaction,
   NewTransactionPayload,
@@ -7,10 +7,17 @@ import {
   FilterOptions,
 } from '../types';
 import {
+  getSupabaseClient,
+  fetchTransactionsFromSupabase,
+  saveTransactionToSupabase,
+  updateTransactionInSupabase,
+  deleteTransactionFromSupabase,
+  subscribeToSupabaseTransactions,
+} from '../lib/supabase';
+import {
   saveTransactionToFirestore,
   updateTransactionInFirestore,
   deleteTransactionFromFirestore,
-  subscribeToFirestoreTransactions,
   fetchTransactionsFromFirestore,
 } from '../lib/firebase';
 import { getCurrentISTDate, getCurrentISTTime, getPresetDateRange } from '../lib/dateUtils';
@@ -37,6 +44,7 @@ interface ExpenseContextType {
   deleteTransaction: (id: string) => Promise<boolean>;
   clearAllTransactions: () => Promise<void>;
   refreshTransactions: () => Promise<void>;
+  isSupabaseConnected: boolean;
   isFirebaseConnected: boolean;
 }
 
@@ -47,7 +55,7 @@ const LOCAL_STORAGE_KEY = 'my_money_transactions_real';
 export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
 
-  // All transactions loaded from persistent store / Firebase
+  // All transactions loaded from persistent store / Supabase
   const [allTransactions, setAllTransactions] = useState<Transaction[]>(() => {
     try {
       const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
@@ -59,6 +67,7 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [isSupabaseConnected, setIsSupabaseConnected] = useState<boolean>(false);
   const [isFirebaseConnected, setIsFirebaseConnected] = useState<boolean>(false);
 
   const [filterOptions, setFilterOptions] = useState<FilterOptions>({
@@ -79,72 +88,70 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   };
 
-  // Connect to Firebase Firestore & subscribe to real-time updates
-  useEffect(() => {
-    let unsubscribe: (() => void) | undefined;
-
-    const initFirebaseSync = async () => {
-      setIsLoading(true);
-      setError(null);
-      try {
-        const liveData = await fetchTransactionsFromFirestore();
-        setAllTransactions(liveData);
-        persistLocally(liveData);
-        setIsFirebaseConnected(true);
-      } catch (err: any) {
-        console.warn('Initial Firestore fetch notice:', err.message);
-        const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
-        if (saved) {
-          try {
-            setAllTransactions(JSON.parse(saved));
-          } catch {}
-        }
-      } finally {
-        setIsLoading(false);
-      }
-
-      // Realtime listener
-      try {
-        unsubscribe = subscribeToFirestoreTransactions(
-          (liveList) => {
-            setIsFirebaseConnected(true);
-            setAllTransactions(liveList);
-            persistLocally(liveList);
-          },
-          (err) => {
-            console.warn('Firestore subscription status:', err.message);
-          }
-        );
-      } catch (e) {
-        console.warn('Realtime subscription not started:', e);
-      }
-    };
-
-    initFirebaseSync();
-
-    return () => {
-      if (unsubscribe) unsubscribe();
-    };
-  }, []);
-
-  const refreshTransactions = async () => {
+  // Primary database sync: SUPABASE with Postgres Realtime
+  const syncWithDatabase = useCallback(async () => {
     setIsLoading(true);
+    setError(null);
+
+    // 1. Try Supabase Database first (Primary)
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const supaData = await fetchTransactionsFromSupabase(user?.uid);
+        if (supaData) {
+          setAllTransactions(supaData);
+          persistLocally(supaData);
+          setIsSupabaseConnected(true);
+          setIsLoading(false);
+          return;
+        }
+      } catch (supaErr: any) {
+        console.warn('Supabase fetch notice, trying fallback:', supaErr.message);
+      }
+    }
+
+    // 2. Try Firebase Firestore fallback if Supabase credentials are not connected yet
     try {
-      const data = await fetchTransactionsFromFirestore();
-      setAllTransactions(data);
-      persistLocally(data);
-      setIsFirebaseConnected(true);
-    } catch (err: any) {
-      console.error('Refresh error:', err);
-      setError(err.message);
+      const firestoreData = await fetchTransactionsFromFirestore();
+      if (firestoreData && firestoreData.length > 0) {
+        setAllTransactions(firestoreData);
+        persistLocally(firestoreData);
+        setIsFirebaseConnected(true);
+      }
+    } catch (fbErr: any) {
+      // 3. Fallback to cached local storage
+      const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+      if (saved) {
+        try {
+          setAllTransactions(JSON.parse(saved));
+        } catch {}
+      }
     } finally {
       setIsLoading(false);
     }
+  }, [user]);
+
+  // Initial load and real-time subscription
+  useEffect(() => {
+    syncWithDatabase();
+
+    // Subscribe to Supabase Postgres Realtime changes
+    const unsubscribeSupabase = subscribeToSupabaseTransactions(() => {
+      setIsSupabaseConnected(true);
+      syncWithDatabase();
+    });
+
+    return () => {
+      unsubscribeSupabase();
+    };
+  }, [syncWithDatabase]);
+
+  const refreshTransactions = async () => {
+    await syncWithDatabase();
   };
 
   // STRICT MULTI-USER DATA ISOLATION (DEFENSE-IN-DEPTH):
   // User Financial Privacy: Each user sees ONLY their own records.
-  // Administrators do NOT view or modify other users' private financial transactions.
   const userTransactions: Transaction[] = useMemo(() => {
     if (!user) return [];
 
@@ -199,13 +206,21 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
       return updated;
     });
 
-    // Save to Firestore
+    // 1. Save to Supabase (Primary Database)
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        await saveTransactionToSupabase(newTx);
+        setIsSupabaseConnected(true);
+      } catch (err: any) {
+        console.warn('Supabase save notice, cached locally:', err.message);
+      }
+    }
+
+    // 2. Secondary backup save to Firestore if configured
     try {
       await saveTransactionToFirestore(newTx);
-      setIsFirebaseConnected(true);
-    } catch (err: any) {
-      console.warn('Firebase save notice, cached locally:', err);
-    }
+    } catch {}
 
     return newTx;
   };
@@ -259,12 +274,21 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
       return updated;
     });
 
+    // 1. Update in Supabase (Primary)
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        await updateTransactionInSupabase(id, updatedTx);
+        setIsSupabaseConnected(true);
+      } catch (err: any) {
+        console.warn('Supabase update notice, cached locally:', err.message);
+      }
+    }
+
+    // 2. Secondary update in Firestore
     try {
       await updateTransactionInFirestore(id, updatedTx);
-      setIsFirebaseConnected(true);
-    } catch (err: any) {
-      console.warn('Firebase update notice, cached locally:', err);
-    }
+    } catch {}
 
     return updatedTx;
   };
@@ -287,18 +311,33 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
       return updated;
     });
 
+    // 1. Delete in Supabase (Primary)
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        await deleteTransactionFromSupabase(id);
+        setIsSupabaseConnected(true);
+      } catch (err: any) {
+        console.warn('Supabase delete notice, cached locally:', err.message);
+      }
+    }
+
+    // 2. Secondary delete in Firestore
     try {
       await deleteTransactionFromFirestore(id);
-      setIsFirebaseConnected(true);
-    } catch (err: any) {
-      console.warn('Firebase delete notice, cached locally:', err);
-    }
+    } catch {}
 
     return true;
   };
 
   const clearAllTransactions = async () => {
     for (const t of userTransactions) {
+      const supabase = getSupabaseClient();
+      if (supabase) {
+        try {
+          await deleteTransactionFromSupabase(t.id);
+        } catch {}
+      }
       try {
         await deleteTransactionFromFirestore(t.id);
       } catch {}
@@ -509,6 +548,7 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
         deleteTransaction,
         clearAllTransactions,
         refreshTransactions,
+        isSupabaseConnected,
         isFirebaseConnected,
       }}
     >
