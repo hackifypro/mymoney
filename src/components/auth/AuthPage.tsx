@@ -109,16 +109,18 @@ export const AuthPage: React.FC = () => {
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col justify-center py-12 sm:px-6 lg:px-8 px-4 transition-colors">
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
         {/* Brand Header */}
-        <div className="flex items-center justify-center gap-3 mb-2">
-          <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-500 flex items-center justify-center text-white shadow-xl shadow-emerald-600/30">
-            <Wallet className="w-6 h-6" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-extrabold text-slate-900 dark:text-slate-100 tracking-tight">
-              My Money
+        <div className="flex flex-col items-center justify-center gap-2 mb-3">
+          <img
+            src="/logo.jpg"
+            alt="My Money Manager by HackifyPro"
+            className="w-16 h-16 rounded-2xl object-cover shadow-xl shadow-emerald-600/30 border-2 border-emerald-500/40"
+          />
+          <div className="text-center">
+            <h1 className="text-2xl font-black text-slate-900 dark:text-slate-100 tracking-tight">
+              My Money Manager
             </h1>
-            <p className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
-              Personal Money Manager
+            <p className="text-xs font-bold text-emerald-600 dark:text-emerald-400">
+              by HackifyPro
             </p>
           </div>
         </div>

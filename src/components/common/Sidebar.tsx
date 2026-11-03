@@ -65,14 +65,20 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab, onOpe
   return (
     <aside className="hidden lg:flex flex-col w-64 xl:w-72 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 h-screen sticky top-0 select-none">
       {/* Brand Header */}
-      <div className="p-6 border-b border-slate-100 dark:border-slate-800/80">
+      <div className="p-5 border-b border-slate-100 dark:border-slate-800/80">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-500 flex items-center justify-center text-white shadow-lg shadow-emerald-500/25">
-            <Wallet className="w-5 h-5" />
-          </div>
-          <div>
-            <h1 className="text-lg font-bold text-slate-900 dark:text-slate-100 leading-tight">My Money</h1>
-            <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">Personal Money Manager</p>
+          <img
+            src="/logo.jpg"
+            alt="My Money Manager by HackifyPro"
+            className="w-11 h-11 rounded-xl object-cover shadow-md shadow-emerald-500/20 border border-emerald-500/30"
+          />
+          <div className="min-w-0">
+            <h1 className="text-base font-extrabold text-slate-900 dark:text-slate-100 leading-tight truncate">
+              My Money Manager
+            </h1>
+            <p className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+              by HackifyPro
+            </p>
           </div>
         </div>
 

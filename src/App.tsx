@@ -47,10 +47,14 @@ const MainContent: React.FC = () => {
   if (isLoading) {
     return (
       <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center">
-        <div className="w-12 h-12 rounded-2xl bg-emerald-600 text-white flex items-center justify-center animate-bounce shadow-xl">
-          <Wallet className="w-6 h-6" />
-        </div>
-        <p className="text-xs font-bold text-slate-500 mt-4 tracking-wider uppercase">Loading My Money...</p>
+        <img
+          src="/logo.jpg"
+          alt="My Money Manager by HackifyPro"
+          className="w-16 h-16 rounded-2xl object-cover shadow-2xl shadow-emerald-500/20 border-2 border-emerald-500/40 animate-pulse"
+        />
+        <p className="text-xs font-bold text-slate-500 dark:text-slate-400 mt-4 tracking-wider uppercase">
+          Loading My Money Manager...
+        </p>
       </div>
     );
   }

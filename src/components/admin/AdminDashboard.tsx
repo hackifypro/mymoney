@@ -322,16 +322,17 @@ export const AdminDashboard: React.FC = () => {
             <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 uppercase text-[10px] tracking-wider border-b border-slate-200 dark:border-slate-800">
               <tr>
                 <th className="py-3 px-4 font-bold">1. User ID (UUID)</th>
-                <th className="py-3 px-4 font-bold">2. User Login Email / ID</th>
-                <th className="py-3 px-4 font-bold">3. Account Creation Date</th>
-                <th className="py-3 px-4 font-bold">4. Account Status</th>
+                <th className="py-3 px-4 font-bold">2. Real Login Email / ID</th>
+                <th className="py-3 px-4 font-bold">3. Password Security</th>
+                <th className="py-3 px-4 font-bold">4. Account Creation Date</th>
+                <th className="py-3 px-4 font-bold">5. Account Status</th>
                 <th className="py-3 px-4 font-bold text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {filteredUsers.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="py-8 text-center text-slate-400">
+                  <td colSpan={6} className="py-8 text-center text-slate-400">
                     No users matching criteria found.
                   </td>
                 </tr>
@@ -345,7 +346,7 @@ export const AdminDashboard: React.FC = () => {
                       {/* Field 1: User ID */}
                       <td className="py-3.5 px-4 font-mono text-[11px] text-slate-600 dark:text-slate-300 whitespace-nowrap">
                         <div className="flex items-center gap-1.5">
-                          <span>{u.id}</span>
+                          <span className="font-semibold text-slate-800 dark:text-slate-200">{u.id}</span>
                           <button
                             type="button"
                             onClick={() => handleCopyId(u.id)}
@@ -357,17 +358,30 @@ export const AdminDashboard: React.FC = () => {
                         </div>
                       </td>
 
-                      {/* Field 2: User Login Email */}
+                      {/* Field 2: Real User Login Email / ID */}
                       <td className="py-3.5 px-4 font-semibold text-slate-900 dark:text-slate-100">
-                        {u.email}
+                        <span className="bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 px-2 py-0.5 rounded-md font-mono text-[11px] border border-indigo-200/60 dark:border-indigo-800/40">
+                          {u.email}
+                        </span>
                       </td>
 
-                      {/* Field 3: Account Creation Date */}
+                      {/* Field 3: Password Security Status */}
+                      <td className="py-3.5 px-4 whitespace-nowrap">
+                        <div className="flex items-center gap-1.5" title="Passwords are mathematically hashed with bcrypt. Plaintext passwords are never stored in the database.">
+                          <Lock className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                          <span className="font-mono text-[11px] text-slate-500 tracking-wider">••••••••••••</span>
+                          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200/60 dark:border-emerald-800/40">
+                            Bcrypt Hashed
+                          </span>
+                        </div>
+                      </td>
+
+                      {/* Field 4: Account Creation Date */}
                       <td className="py-3.5 px-4 text-slate-500 whitespace-nowrap">
                         {u.createdAt ? new Date(u.createdAt).toLocaleString('en-IN') : 'N/A'}
                       </td>
 
-                      {/* Field 4: Account Status */}
+                      {/* Field 5: Account Status */}
                       <td className="py-3.5 px-4 whitespace-nowrap">
                         <span
                           className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider ${
