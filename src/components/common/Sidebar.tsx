@@ -15,6 +15,15 @@ import {
   LogOut,
   Shield,
   User,
+  Trash2,
+  FolderKanban,
+  GraduationCap,
+  Briefcase,
+  Heart,
+  Plane,
+  Car,
+  Sparkles,
+  AlertTriangle,
 } from 'lucide-react';
 import { useExpense } from '../../context/ExpenseContext';
 import { useTheme } from '../../context/ThemeContext';
@@ -29,8 +38,24 @@ export type NavTab =
   | 'people'
   | 'reports'
   | 'all_transactions'
+  | 'recycle_bin'
   | 'settings'
-  | 'admin';
+  | 'admin'
+  | string;
+
+const iconMap: Record<string, any> = {
+  Home: HomeIcon,
+  DoorOpen,
+  ShoppingBag,
+  Users,
+  GraduationCap,
+  Briefcase,
+  Heart,
+  Plane,
+  Car,
+  Sparkles,
+  FolderKanban,
+};
 
 interface SidebarProps {
   currentTab: NavTab;
@@ -39,25 +64,45 @@ interface SidebarProps {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab, onOpenAddModal }) => {
-  const { summary } = useExpense();
+  const { summary, recycleBinTransactions, dynamicSections, maintenanceSettings } = useExpense();
   const { theme, toggleTheme } = useTheme();
   const { user, isAdmin, logout } = useAuth();
 
-  const navItems = [
+  // Find enabled custom sections that aren't the standard 4 (home, room, other, people)
+  const coreSectionIds = ['home', 'room', 'other', 'people'];
+  const customSections = dynamicSections.filter(
+    (s) => s.is_enabled && !coreSectionIds.includes(s.id)
+  );
+
+  interface NavItem {
+    id: NavTab;
+    label: string;
+    icon: any;
+    countBadge?: string;
+    badgeNum?: number;
+  }
+
+  const navItems: NavItem[] = [
     { id: 'dashboard' as NavTab, label: 'Dashboard', icon: LayoutDashboard },
     { id: 'home' as NavTab, label: 'Home Money', icon: HomeIcon, countBadge: formatINR(summary.remainingHomeBalance) },
     { id: 'room' as NavTab, label: 'Room Expenses', icon: DoorOpen, countBadge: formatINR(summary.totalRoomExpenses) },
     { id: 'other' as NavTab, label: 'Other Expenses', icon: ShoppingBag, countBadge: formatINR(summary.totalOtherExpenses) },
     { id: 'people' as NavTab, label: 'People (Udhar)', icon: Users, countBadge: formatINR(summary.netPeopleBalance) },
+    ...customSections.map((sec) => ({
+      id: sec.id as NavTab,
+      label: sec.name,
+      icon: iconMap[sec.icon] || FolderKanban,
+    })),
     { id: 'reports' as NavTab, label: 'Reports & Analytics', icon: BarChart3 },
     { id: 'all_transactions' as NavTab, label: 'All Transactions', icon: ListOrdered, badgeNum: summary.totalTransactionsCount },
+    { id: 'recycle_bin' as NavTab, label: 'Recycle Bin', icon: Trash2, badgeNum: recycleBinTransactions.length > 0 ? recycleBinTransactions.length : undefined },
     { id: 'settings' as NavTab, label: 'Settings & Profile', icon: Settings },
   ];
 
   if (isAdmin) {
     navItems.push({
       id: 'admin' as NavTab,
-      label: 'Admin Security',
+      label: 'Admin Control',
       icon: Shield,
     });
   }
@@ -144,9 +189,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab, onOpe
               )}
 
               {isAdminItem && (
-                <span className="ml-2 px-1.5 py-0.5 text-[9px] font-bold rounded-md bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300">
-                  SEC
-                </span>
+                <div className="flex items-center gap-1">
+                  {maintenanceSettings.isEnabled && (
+                    <span className="px-1.5 py-0.5 text-[9px] font-bold rounded-md bg-amber-500 text-slate-950 animate-pulse">
+                      MAINT
+                    </span>
+                  )}
+                  <span className="px-1.5 py-0.5 text-[9px] font-bold rounded-md bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300">
+                    ADM
+                  </span>
+                </div>
               )}
             </button>
           );

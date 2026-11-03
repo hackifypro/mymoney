@@ -330,6 +330,90 @@ $$;
 GRANT EXECUTE ON FUNCTION public.admin_set_user_password(UUID, TEXT) TO authenticated, anon;
 GRANT EXECUTE ON FUNCTION public.admin_delete_user(UUID) TO authenticated, anon;
 
+-- ------------------------------------------------------------------------------
+-- 10. ENTERPRISE TABLES: DYNAMIC SECTIONS, APP SETTINGS & RECYCLE BIN
+-- ------------------------------------------------------------------------------
+
+-- 1. Transactions Recycle Bin Columns
+ALTER TABLE public.transactions
+ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE,
+ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ,
+ADD COLUMN IF NOT EXISTS deleted_by UUID;
+
+CREATE INDEX IF NOT EXISTS idx_transactions_is_deleted ON public.transactions(is_deleted);
+
+-- 2. Dynamic Sections Table
+CREATE TABLE IF NOT EXISTS public.sections (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  icon TEXT NOT NULL DEFAULT 'Folder',
+  description TEXT,
+  display_order INT DEFAULT 0,
+  is_enabled BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 3. App Settings Table (Maintenance Mode & Branding)
+CREATE TABLE IF NOT EXISTS public.app_settings (
+  key TEXT PRIMARY KEY,
+  value JSONB NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_by UUID
+);
+
+-- 4. Notifications & Broadcast Announcements Table
+CREATE TABLE IF NOT EXISTS public.notifications (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title TEXT NOT NULL,
+  message TEXT NOT NULL,
+  type TEXT DEFAULT 'info' CHECK (type IN ('info', 'warning', 'announcement', 'maintenance')),
+  target_user_id TEXT DEFAULT 'all',
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  created_by UUID
+);
+
+ALTER TABLE public.sections ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.app_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.notifications ENABLE ROW LEVEL SECURITY;
+
+-- Dynamic Sections Policies
+DROP POLICY IF EXISTS "sections_read_policy" ON public.sections;
+CREATE POLICY "sections_read_policy"
+  ON public.sections FOR SELECT
+  USING (is_enabled = TRUE OR public.is_admin());
+
+DROP POLICY IF EXISTS "sections_admin_all" ON public.sections;
+CREATE POLICY "sections_admin_all"
+  ON public.sections FOR ALL
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
+
+-- App Settings Policies
+DROP POLICY IF EXISTS "app_settings_read_all" ON public.app_settings;
+CREATE POLICY "app_settings_read_all"
+  ON public.app_settings FOR SELECT
+  USING (TRUE);
+
+DROP POLICY IF EXISTS "app_settings_admin_write" ON public.app_settings;
+CREATE POLICY "app_settings_admin_write"
+  ON public.app_settings FOR ALL
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
+
+-- Notifications Policies
+DROP POLICY IF EXISTS "notifications_read_policy" ON public.notifications;
+CREATE POLICY "notifications_read_policy"
+  ON public.notifications FOR SELECT
+  USING (is_active = TRUE AND (target_user_id = 'all' OR target_user_id = auth.uid()::text OR public.is_admin()));
+
+DROP POLICY IF EXISTS "notifications_admin_all" ON public.notifications;
+CREATE POLICY "notifications_admin_all"
+  ON public.notifications FOR ALL
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
+
 -- ==============================================================================
 -- Schema and RLS configuration complete.
 -- ==============================================================================

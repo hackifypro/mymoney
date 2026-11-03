@@ -1,4 +1,4 @@
-export type TransactionCategory = 'home' | 'room' | 'other' | 'people';
+export type TransactionCategory = 'home' | 'room' | 'other' | 'people' | string;
 
 export type TransactionSubcategory =
   // Home subcategories
@@ -13,7 +13,8 @@ export type TransactionSubcategory =
   | 'other_expense'
   // People subcategories
   | 'money_given'
-  | 'money_received';
+  | 'money_received'
+  | string;
 
 export type TransactionType = 'income' | 'expense';
 
@@ -45,20 +46,16 @@ export interface AuthUser {
 
 /**
  * STRICT ADMIN DASHBOARD VIEW MODEL
- * Mandated: The admin dashboard must display ONLY:
- * 1. User ID
- * 2. User Login Email / Login ID
- * 3. Account Creation Date
- * 4. Account Status (Active / Suspended)
- *
- * PROHIBITED: Passwords, password hashes, transaction details, personal info, tokens.
+ * Displays user identity and management status safely.
  */
 export interface AdminUserListItem {
   id: string;
   email: string;
   createdAt: string;
   status: 'active' | 'suspended';
+  role?: 'admin' | 'user';
   displayPassword?: string;
+  display_password?: string;
 }
 
 export interface Transaction {
@@ -76,8 +73,53 @@ export interface Transaction {
   transaction_time: string; // HH:mm:ss or HH:mm
   notes?: string;
   metadata?: TransactionMetadata;
+  is_deleted?: boolean;
+  deleted_at?: string;
+  deleted_by?: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface DynamicSection {
+  id: string;
+  name: string;
+  icon: string;
+  description?: string;
+  display_order: number;
+  is_enabled: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface MaintenanceSettings {
+  isEnabled: boolean;
+  title: string;
+  message: string;
+  expectedRestoration?: string;
+  startDate?: string;
+  endDate?: string;
+}
+
+export interface AppBrandingSettings {
+  appName: string;
+  subTitle: string;
+  logoUrl: string;
+  currencySymbol: string;
+  currencyCode: string;
+  timezone: string;
+  allowRegistration: boolean;
+  allowLogin: boolean;
+}
+
+export interface BroadcastNotification {
+  id: string;
+  title: string;
+  message: string;
+  type: 'info' | 'warning' | 'announcement' | 'maintenance';
+  target_user_id: string;
+  is_active: boolean;
+  created_at: string;
+  created_by?: string;
 }
 
 export interface NewTransactionPayload {

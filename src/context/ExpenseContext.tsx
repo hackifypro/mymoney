@@ -5,21 +5,34 @@ import {
   FinancialSummary,
   PersonSummary,
   FilterOptions,
+  DynamicSection,
+  MaintenanceSettings,
+  AppBrandingSettings,
+  BroadcastNotification,
 } from '../types';
 import {
   getSupabaseClient,
   fetchTransactionsFromSupabase,
   saveTransactionToSupabase,
   updateTransactionInSupabase,
-  deleteTransactionFromSupabase,
   subscribeToSupabaseTransactions,
+  softDeleteTransactionFromSupabase,
+  restoreTransactionInSupabase,
+  permanentDeleteTransactionFromSupabase,
+  fetchSectionsFromSupabase,
+  saveSectionToSupabase,
+  deleteSectionFromSupabase,
+  fetchAppSettingFromSupabase,
+  saveAppSettingToSupabase,
+  fetchNotificationsFromSupabase,
+  saveNotificationToSupabase,
+  deactivateNotificationInSupabase,
 } from '../lib/supabase';
 import { getCurrentISTDate, getCurrentISTTime, getPresetDateRange } from '../lib/dateUtils';
 import { useAuth } from './AuthContext';
 import {
   validateTransactionPayload,
   validateAmount,
-  sanitizeInput,
   assertResourceOwnership,
   SecurityAuthorizationError,
 } from '../lib/security';
@@ -39,16 +52,71 @@ interface ExpenseContextType {
   clearAllTransactions: () => Promise<void>;
   refreshTransactions: () => Promise<void>;
   isSupabaseConnected: boolean;
+
+  // Recycle Bin & Recovery
+  recycleBinTransactions: Transaction[];
+  restoreTransaction: (id: string) => Promise<boolean>;
+  permanentDeleteTransaction: (id: string) => Promise<boolean>;
+
+  // Dynamic Sections Management
+  dynamicSections: DynamicSection[];
+  refreshSections: () => Promise<void>;
+  addSection: (section: DynamicSection) => Promise<boolean>;
+  updateSection: (id: string, updates: Partial<DynamicSection>) => Promise<boolean>;
+  deleteSection: (id: string) => Promise<boolean>;
+
+  // App Settings & Maintenance Mode
+  maintenanceSettings: MaintenanceSettings;
+  updateMaintenanceSettings: (settings: Partial<MaintenanceSettings>) => Promise<boolean>;
+  appBranding: AppBrandingSettings;
+  updateAppBranding: (settings: Partial<AppBrandingSettings>) => Promise<boolean>;
+
+  // Notifications & Announcements
+  notifications: BroadcastNotification[];
+  refreshNotifications: () => Promise<void>;
+  createNotification: (notif: Partial<BroadcastNotification>) => Promise<boolean>;
+  deactivateNotification: (id: string) => Promise<boolean>;
+
+  // Admin Global Financial Queries
+  allGlobalTransactions: Transaction[];
 }
 
 const ExpenseContext = createContext<ExpenseContextType | undefined>(undefined);
 
 const LOCAL_STORAGE_KEY = 'my_money_transactions_real';
+const LOCAL_SECTIONS_KEY = 'my_money_sections_cache';
+const LOCAL_MAINTENANCE_KEY = 'my_money_maintenance_cache';
+const LOCAL_BRANDING_KEY = 'my_money_branding_cache';
+
+const DEFAULT_SECTIONS: DynamicSection[] = [
+  { id: 'home', name: 'Home Money', icon: 'Home', description: 'Money received & spent for home', display_order: 1, is_enabled: true },
+  { id: 'room', name: 'Room Expenses', icon: 'DoorOpen', description: 'Gas, grocery, room rent & power bill', display_order: 2, is_enabled: true },
+  { id: 'other', name: 'Other Expenses', icon: 'ShoppingBag', description: 'Shopping, food, entertainment & personal', display_order: 3, is_enabled: true },
+  { id: 'people', name: 'People (Udhar)', icon: 'Users', description: 'Money given & received from people', display_order: 4, is_enabled: true },
+];
+
+const DEFAULT_MAINTENANCE: MaintenanceSettings = {
+  isEnabled: false,
+  title: 'My Money Manager is Under Scheduled Maintenance',
+  message: 'We are upgrading our secure financial infrastructure to deliver better performance and security. Normal services will resume shortly.',
+  expectedRestoration: 'Within 2 hours',
+};
+
+const DEFAULT_BRANDING: AppBrandingSettings = {
+  appName: 'My Money Manager',
+  subTitle: 'by HackifyPro',
+  logoUrl: '/logo.jpg',
+  currencySymbol: '₹',
+  currencyCode: 'INR',
+  timezone: 'Asia/Kolkata',
+  allowRegistration: true,
+  allowLogin: true,
+};
 
 export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
 
-  // All transactions loaded from persistent store / Supabase
+  // All transactions loaded from persistent store / Supabase (including deleted for admin)
   const [allTransactions, setAllTransactions] = useState<Transaction[]>(() => {
     try {
       const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
@@ -57,6 +125,35 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
       return [];
     }
   });
+
+  const [dynamicSections, setDynamicSections] = useState<DynamicSection[]>(() => {
+    try {
+      const saved = localStorage.getItem(LOCAL_SECTIONS_KEY);
+      return saved ? JSON.parse(saved) : DEFAULT_SECTIONS;
+    } catch {
+      return DEFAULT_SECTIONS;
+    }
+  });
+
+  const [maintenanceSettings, setMaintenanceSettings] = useState<MaintenanceSettings>(() => {
+    try {
+      const saved = localStorage.getItem(LOCAL_MAINTENANCE_KEY);
+      return saved ? JSON.parse(saved) : DEFAULT_MAINTENANCE;
+    } catch {
+      return DEFAULT_MAINTENANCE;
+    }
+  });
+
+  const [appBranding, setAppBranding] = useState<AppBrandingSettings>(() => {
+    try {
+      const saved = localStorage.getItem(LOCAL_BRANDING_KEY);
+      return saved ? JSON.parse(saved) : DEFAULT_BRANDING;
+    } catch {
+      return DEFAULT_BRANDING;
+    }
+  });
+
+  const [notifications, setNotifications] = useState<BroadcastNotification[]>([]);
 
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -88,14 +185,42 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        const supaData = await fetchTransactionsFromSupabase(user?.uid);
+        // If user is Admin, fetch all transactions (including for other users) with includeDeleted: true
+        // If normal user, fetch only user's own transactions with includeDeleted: false
+        const targetUserId = isAdmin ? undefined : user?.uid;
+        const supaData = await fetchTransactionsFromSupabase(targetUserId, isAdmin);
         if (supaData) {
           setAllTransactions(supaData);
           persistLocally(supaData);
           setIsSupabaseConnected(true);
-          setIsLoading(false);
-          return;
         }
+
+        // Fetch dynamic sections
+        const sectionsData = await fetchSectionsFromSupabase();
+        if (sectionsData && sectionsData.length > 0) {
+          setDynamicSections(sectionsData);
+          localStorage.setItem(LOCAL_SECTIONS_KEY, JSON.stringify(sectionsData));
+        }
+
+        // Fetch app maintenance mode & branding
+        const maint = await fetchAppSettingFromSupabase<MaintenanceSettings>('maintenance_mode');
+        if (maint) {
+          setMaintenanceSettings(maint);
+          localStorage.setItem(LOCAL_MAINTENANCE_KEY, JSON.stringify(maint));
+        }
+
+        const brand = await fetchAppSettingFromSupabase<AppBrandingSettings>('app_branding');
+        if (brand) {
+          setAppBranding(brand);
+          localStorage.setItem(LOCAL_BRANDING_KEY, JSON.stringify(brand));
+        }
+
+        // Fetch notifications
+        const notifs = await fetchNotificationsFromSupabase();
+        setNotifications(notifs);
+
+        setIsLoading(false);
+        return;
       } catch (supaErr: any) {
         console.warn('Supabase fetch notice, using local cache:', supaErr.message);
       }
@@ -109,13 +234,12 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
       } catch {}
     }
     setIsLoading(false);
-  }, [user]);
+  }, [user, isAdmin]);
 
   // Initial load and real-time subscription
   useEffect(() => {
     syncWithDatabase();
 
-    // Subscribe to Supabase Postgres Realtime changes
     const unsubscribeSupabase = subscribeToSupabaseTransactions(() => {
       setIsSupabaseConnected(true);
       syncWithDatabase();
@@ -130,25 +254,44 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
     await syncWithDatabase();
   };
 
-  // STRICT MULTI-USER DATA ISOLATION (DEFENSE-IN-DEPTH):
-  // User Financial Privacy: Each user sees ONLY their own records.
+  // -------------------------------------------------------------
+  // STRICT MULTI-USER DATA ISOLATION (USER DASHBOARD VIEW)
+  // -------------------------------------------------------------
+  // User sees ONLY their own records, and only NON-DELETED records
   const userTransactions: Transaction[] = useMemo(() => {
     if (!user) return [];
 
     return allTransactions.filter(
       (t) =>
-        t.user_id === user.uid ||
-        (t.user_email && t.user_email.toLowerCase() === user.email.toLowerCase())
+        (t.user_id === user.uid || (t.user_email && t.user_email.toLowerCase() === user.email.toLowerCase())) &&
+        !t.is_deleted
     );
   }, [allTransactions, user]);
 
-  // Add transaction with strict input validation, sanitization, and ownership assertion
+  // Recycle Bin transactions (User sees their deleted; Admin sees all deleted)
+  const recycleBinTransactions: Transaction[] = useMemo(() => {
+    if (!user) return [];
+    if (isAdmin) {
+      return allTransactions.filter((t) => Boolean(t.is_deleted));
+    }
+    return allTransactions.filter(
+      (t) =>
+        (t.user_id === user.uid || (t.user_email && t.user_email.toLowerCase() === user.email.toLowerCase())) &&
+        Boolean(t.is_deleted)
+    );
+  }, [allTransactions, user, isAdmin]);
+
+  // Global transactions for admin overview and management
+  const allGlobalTransactions: Transaction[] = useMemo(() => {
+    return allTransactions.filter((t) => !t.is_deleted);
+  }, [allTransactions]);
+
+  // Add transaction
   const addTransaction = async (payload: NewTransactionPayload): Promise<Transaction> => {
     if (!user) {
       throw new SecurityAuthorizationError('Authentication required: You must be logged in to record transactions.');
     }
 
-    // 1. Validate payload against injection, tampering, negative amounts, invalid categories
     const validation = validateTransactionPayload(payload, user.uid);
     if (!validation.isValid || !validation.sanitizedPayload) {
       throw new Error(`Validation Error: ${validation.errors.join(' ')}`);
@@ -175,18 +318,17 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
       transaction_time: clean.transaction_time || getCurrentISTTime(),
       notes: clean.notes,
       metadata: clean.metadata || {},
+      is_deleted: false,
       created_at: nowIso,
       updated_at: nowIso,
     };
 
-    // Optimistically update local state & storage
     setAllTransactions((prev) => {
       const updated = [newTx, ...prev];
       persistLocally(updated);
       return updated;
     });
 
-    // Save to Supabase (Primary Database)
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
@@ -200,7 +342,7 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
     return newTx;
   };
 
-  // Edit transaction with IDOR check, immutability check, and sanitization
+  // Edit transaction
   const editTransaction = async (id: string, updates: Partial<NewTransactionPayload>): Promise<Transaction> => {
     if (!user) {
       throw new SecurityAuthorizationError('Authentication required.');
@@ -211,12 +353,11 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
       throw new Error(`Transaction with ID "${id}" not found.`);
     }
 
-    // ANTI-IDOR SECURITY CHECK: Ensure requesting user owns this transaction!
-    if (existing.user_id && existing.user_id !== user.uid) {
+    // ANTI-IDOR SECURITY CHECK: Ensure requesting user owns this transaction unless Admin
+    if (!isAdmin && existing.user_id && existing.user_id !== user.uid) {
       assertResourceOwnership(user.uid, existing.user_id);
     }
 
-    // Validate updated amount if provided
     let cleanAmount = existing.amount;
     if (updates.amount !== undefined) {
       const amtCheck = validateAmount(updates.amount);
@@ -228,19 +369,18 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     const updatedTx: Transaction = {
       ...existing,
-      ...updates,
-      // Enforce immutability of ownership and creation timestamp
-      id: existing.id,
-      user_id: existing.user_id,
-      user_email: existing.user_email,
-      created_at: existing.created_at,
-      updated_at: new Date().toISOString(),
+      category: updates.category || existing.category,
+      subcategory: updates.subcategory || existing.subcategory,
+      transaction_type: updates.transaction_type || existing.transaction_type,
       amount: cleanAmount,
-      title: updates.title !== undefined ? sanitizeInput(updates.title) : existing.title,
-      description: updates.description !== undefined ? sanitizeInput(updates.description) : existing.description,
-      person_name: updates.person_name !== undefined ? sanitizeInput(updates.person_name) : existing.person_name,
-      notes: updates.notes !== undefined ? sanitizeInput(updates.notes) : existing.notes,
+      title: updates.title !== undefined ? updates.title.trim() : existing.title,
+      description: updates.description !== undefined ? updates.description : existing.description,
+      person_name: updates.person_name !== undefined ? updates.person_name : existing.person_name,
+      transaction_date: updates.transaction_date || existing.transaction_date,
+      transaction_time: updates.transaction_time || existing.transaction_time,
+      notes: updates.notes !== undefined ? updates.notes : existing.notes,
       metadata: updates.metadata ? { ...existing.metadata, ...updates.metadata } : existing.metadata,
+      updated_at: new Date().toISOString(),
     };
 
     setAllTransactions((prev) => {
@@ -249,7 +389,6 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
       return updated;
     });
 
-    // Update in Supabase (Primary)
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
@@ -263,17 +402,66 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
     return updatedTx;
   };
 
-  // Delete transaction with IDOR check
+  // Delete transaction: Soft delete (Move to Recycle Bin)
   const deleteTransaction = async (id: string): Promise<boolean> => {
-    if (!id || !user) return false;
+    if (!user) return false;
 
     const existing = allTransactions.find((t) => t.id === id);
     if (!existing) return false;
 
-    // ANTI-IDOR SECURITY CHECK: Ensure requesting user owns this transaction!
-    if (existing.user_id && existing.user_id !== user.uid) {
+    if (!isAdmin && existing.user_id && existing.user_id !== user.uid) {
       assertResourceOwnership(user.uid, existing.user_id);
     }
+
+    const nowIso = new Date().toISOString();
+    setAllTransactions((prev) => {
+      const updated = prev.map((t) =>
+        t.id === id ? { ...t, is_deleted: true, deleted_at: nowIso, deleted_by: user.uid } : t
+      );
+      persistLocally(updated);
+      return updated;
+    });
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        await softDeleteTransactionFromSupabase(id, user.uid);
+        setIsSupabaseConnected(true);
+      } catch (err: any) {
+        console.warn('Supabase soft delete notice:', err.message);
+      }
+    }
+
+    return true;
+  };
+
+  // Restore transaction from Recycle Bin
+  const restoreTransaction = async (id: string): Promise<boolean> => {
+    if (!user) return false;
+
+    setAllTransactions((prev) => {
+      const updated = prev.map((t) =>
+        t.id === id ? { ...t, is_deleted: false, deleted_at: undefined, deleted_by: undefined } : t
+      );
+      persistLocally(updated);
+      return updated;
+    });
+
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        await restoreTransactionInSupabase(id);
+      } catch (err: any) {
+        console.warn('Supabase restore notice:', err.message);
+      }
+    }
+
+    return true;
+  };
+
+  // Permanent Delete transaction (Irreversible)
+  const permanentDeleteTransaction = async (id: string): Promise<boolean> => {
+    if (!user) return false;
 
     setAllTransactions((prev) => {
       const updated = prev.filter((t) => t.id !== id);
@@ -281,14 +469,12 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
       return updated;
     });
 
-    // Delete in Supabase (Primary)
     const supabase = getSupabaseClient();
     if (supabase) {
       try {
-        await deleteTransactionFromSupabase(id);
-        setIsSupabaseConnected(true);
+        await permanentDeleteTransactionFromSupabase(id);
       } catch (err: any) {
-        console.warn('Supabase delete notice, cached locally:', err.message);
+        console.warn('Supabase permanent delete notice:', err.message);
       }
     }
 
@@ -297,14 +483,102 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const clearAllTransactions = async () => {
     for (const t of userTransactions) {
-      const supabase = getSupabaseClient();
-      if (supabase) {
-        try {
-          await deleteTransactionFromSupabase(t.id);
-        } catch {}
-      }
+      await deleteTransaction(t.id);
     }
-    setAllTransactions((prev) => prev.filter((t) => !userTransactions.some((ut) => ut.id === t.id)));
+  };
+
+  // Dynamic Section Management
+  const refreshSections = async () => {
+    const sec = await fetchSectionsFromSupabase();
+    if (sec && sec.length > 0) {
+      setDynamicSections(sec);
+      localStorage.setItem(LOCAL_SECTIONS_KEY, JSON.stringify(sec));
+    }
+  };
+
+  const addSection = async (section: DynamicSection): Promise<boolean> => {
+    setDynamicSections((prev) => [...prev, section]);
+    try {
+      await saveSectionToSupabase(section);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const updateSection = async (id: string, updates: Partial<DynamicSection>): Promise<boolean> => {
+    setDynamicSections((prev) =>
+      prev.map((s) => (s.id === id ? { ...s, ...updates } : s))
+    );
+    const existing = dynamicSections.find((s) => s.id === id);
+    if (!existing) return false;
+    try {
+      await saveSectionToSupabase({ ...existing, ...updates });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const deleteSection = async (id: string): Promise<boolean> => {
+    setDynamicSections((prev) => prev.filter((s) => s.id !== id));
+    try {
+      await deleteSectionFromSupabase(id);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  // App Settings & Maintenance Mode
+  const updateMaintenanceSettings = async (settings: Partial<MaintenanceSettings>): Promise<boolean> => {
+    const updated = { ...maintenanceSettings, ...settings };
+    setMaintenanceSettings(updated);
+    localStorage.setItem(LOCAL_MAINTENANCE_KEY, JSON.stringify(updated));
+    try {
+      await saveAppSettingToSupabase('maintenance_mode', updated, user?.uid);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const updateAppBranding = async (settings: Partial<AppBrandingSettings>): Promise<boolean> => {
+    const updated = { ...appBranding, ...settings };
+    setAppBranding(updated);
+    localStorage.setItem(LOCAL_BRANDING_KEY, JSON.stringify(updated));
+    try {
+      await saveAppSettingToSupabase('app_branding', updated, user?.uid);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  // Notifications
+  const refreshNotifications = async () => {
+    const notifs = await fetchNotificationsFromSupabase();
+    setNotifications(notifs);
+  };
+
+  const createNotification = async (notif: Partial<BroadcastNotification>): Promise<boolean> => {
+    try {
+      await saveNotificationToSupabase(notif);
+      await refreshNotifications();
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const deactivateNotification = async (id: string): Promise<boolean> => {
+    try {
+      await deactivateNotificationInSupabase(id);
+      await refreshNotifications();
+      return true;
+    } catch {
+      return false;
+    }
   };
 
   // Summary calculated exclusively from the current user's visible transactions
@@ -322,7 +596,6 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
     for (const tx of userTransactions) {
       const amt = Number(tx.amount) || 0;
 
-      // Home calculations
       if (tx.category === 'home') {
         if (tx.subcategory === 'received_home' || tx.transaction_type === 'income') {
           totalHomeReceived += amt;
@@ -331,7 +604,6 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
         }
       }
 
-      // Room calculations
       if (tx.category === 'room') {
         if (tx.subcategory === 'gas') totalGas += amt;
         else if (tx.subcategory === 'grocery') totalGrocery += amt;
@@ -339,12 +611,10 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
         else if (tx.subcategory === 'electricity') totalElectricity += amt;
       }
 
-      // Other calculations
       if (tx.category === 'other') {
         totalOtherExpenses += amt;
       }
 
-      // People calculations
       if (tx.category === 'people') {
         if (tx.subcategory === 'money_given') {
           totalMoneyGiven += amt;
@@ -511,6 +781,23 @@ export const ExpenseProvider: React.FC<{ children: React.ReactNode }> = ({ child
         clearAllTransactions,
         refreshTransactions,
         isSupabaseConnected,
+        recycleBinTransactions,
+        restoreTransaction,
+        permanentDeleteTransaction,
+        dynamicSections,
+        refreshSections,
+        addSection,
+        updateSection,
+        deleteSection,
+        maintenanceSettings,
+        updateMaintenanceSettings,
+        appBranding,
+        updateAppBranding,
+        notifications,
+        refreshNotifications,
+        createNotification,
+        deactivateNotification,
+        allGlobalTransactions,
       }}
     >
       {children}

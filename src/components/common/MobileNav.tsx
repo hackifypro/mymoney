@@ -16,12 +16,34 @@ import {
   LogOut,
   Shield,
   User,
+  Trash2,
+  FolderKanban,
+  GraduationCap,
+  Briefcase,
+  Heart,
+  Plane,
+  Car,
+  Sparkles,
 } from 'lucide-react';
 import { NavTab } from './Sidebar';
 import { useExpense } from '../../context/ExpenseContext';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import { formatINR } from '../../lib/dateUtils';
+
+const iconMap: Record<string, any> = {
+  Home,
+  DoorOpen,
+  ShoppingBag,
+  Users,
+  GraduationCap,
+  Briefcase,
+  Heart,
+  Plane,
+  Car,
+  Sparkles,
+  FolderKanban,
+};
 
 interface MobileNavProps {
   isOpen: boolean;
@@ -38,20 +60,39 @@ export const MobileNav: React.FC<MobileNavProps> = ({
   onSelectTab,
   onOpenAddModal,
 }) => {
-  const { summary } = useExpense();
+  const { summary, recycleBinTransactions, dynamicSections, maintenanceSettings } = useExpense();
   const { theme, toggleTheme } = useTheme();
   const { user, isAdmin, logout } = useAuth();
 
-  const navItems = [
+  const coreSectionIds = ['home', 'room', 'other', 'people'];
+  const customSections = dynamicSections.filter(
+    (s) => s.is_enabled && !coreSectionIds.includes(s.id)
+  );
+
+  interface MobileNavItem {
+    id: NavTab;
+    label: string;
+    icon: any;
+    badge?: string;
+    count?: number;
+  }
+
+  const navItems: MobileNavItem[] = [
     { id: 'dashboard' as NavTab, label: 'Dashboard', icon: LayoutDashboard },
     { id: 'home' as NavTab, label: 'Home Section', icon: Home, badge: formatINR(summary.remainingHomeBalance) },
     { id: 'room' as NavTab, label: 'Room Section', icon: DoorOpen, badge: formatINR(summary.totalRoomExpenses) },
     { id: 'other' as NavTab, label: 'Other Expenses', icon: ShoppingBag, badge: formatINR(summary.totalOtherExpenses) },
     { id: 'people' as NavTab, label: 'People Section (Udhar)', icon: Users, badge: formatINR(summary.netPeopleBalance) },
+    ...customSections.map((sec) => ({
+      id: sec.id as NavTab,
+      label: sec.name,
+      icon: iconMap[sec.icon] || FolderKanban,
+    })),
     { id: 'reports' as NavTab, label: 'Reports & Analytics', icon: BarChart3 },
     { id: 'all_transactions' as NavTab, label: 'All Transactions Ledger', icon: ListOrdered, count: summary.totalTransactionsCount },
+    { id: 'recycle_bin' as NavTab, label: 'Recycle Bin', icon: Trash2, count: recycleBinTransactions.length > 0 ? recycleBinTransactions.length : undefined },
     { id: 'settings' as NavTab, label: 'Settings & Profile', icon: Settings },
-    ...(isAdmin ? [{ id: 'admin' as NavTab, label: 'Admin Security', icon: Shield }] : []),
+    ...(isAdmin ? [{ id: 'admin' as NavTab, label: 'Admin Control', icon: Shield }] : []),
   ];
 
   const handleSelect = (tab: NavTab) => {

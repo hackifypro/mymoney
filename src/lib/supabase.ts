@@ -1,5 +1,11 @@
 import { createClient, SupabaseClient, User } from '@supabase/supabase-js';
-import { Transaction } from '../types';
+import {
+  Transaction,
+  DynamicSection,
+  MaintenanceSettings,
+  AppBrandingSettings,
+  BroadcastNotification,
+} from '../types';
 
 const STORAGE_KEY_URL = 'my_money_supabase_url';
 const STORAGE_KEY_KEY = 'my_money_supabase_key';
@@ -105,7 +111,10 @@ export async function testSupabaseConnection(
 // SUPABASE TRANSACTION DATABASE OPERATIONS
 // ==========================================
 
-export async function fetchTransactionsFromSupabase(userId?: string): Promise<Transaction[]> {
+export async function fetchTransactionsFromSupabase(
+  userId?: string,
+  includeDeleted: boolean = false
+): Promise<Transaction[]> {
   const client = getSupabaseClient();
   if (!client) throw new Error('Supabase client is not configured.');
 
@@ -117,6 +126,11 @@ export async function fetchTransactionsFromSupabase(userId?: string): Promise<Tr
 
   if (userId) {
     query = query.eq('user_id', userId);
+  }
+
+  if (!includeDeleted) {
+    // Exclude soft-deleted records for normal views
+    query = query.or('is_deleted.is.null,is_deleted.eq.false');
   }
 
   const { data, error } = await query;
@@ -140,6 +154,9 @@ export async function fetchTransactionsFromSupabase(userId?: string): Promise<Tr
     transaction_time: row.transaction_time,
     notes: row.notes || undefined,
     metadata: row.metadata || {},
+    is_deleted: Boolean(row.is_deleted),
+    deleted_at: row.deleted_at || undefined,
+    deleted_by: row.deleted_by || undefined,
     created_at: row.created_at,
     updated_at: row.updated_at,
   }));
@@ -149,7 +166,7 @@ export async function saveTransactionToSupabase(tx: Transaction): Promise<Transa
   const client = getSupabaseClient();
   if (!client) throw new Error('Supabase client is not configured.');
 
-  const payload = {
+  const payload: Record<string, any> = {
     id: tx.id,
     user_id: tx.user_id,
     user_email: tx.user_email,
@@ -164,6 +181,9 @@ export async function saveTransactionToSupabase(tx: Transaction): Promise<Transa
     transaction_time: tx.transaction_time,
     notes: tx.notes || null,
     metadata: tx.metadata || {},
+    is_deleted: Boolean(tx.is_deleted),
+    deleted_at: tx.deleted_at || null,
+    deleted_by: tx.deleted_by || null,
     created_at: tx.created_at,
     updated_at: tx.updated_at,
   };
@@ -204,6 +224,9 @@ export async function updateTransactionInSupabase(
   if (updates.transaction_time !== undefined) payload.transaction_time = updates.transaction_time;
   if (updates.notes !== undefined) payload.notes = updates.notes;
   if (updates.metadata !== undefined) payload.metadata = updates.metadata;
+  if (updates.is_deleted !== undefined) payload.is_deleted = updates.is_deleted;
+  if (updates.deleted_at !== undefined) payload.deleted_at = updates.deleted_at;
+  if (updates.deleted_by !== undefined) payload.deleted_by = updates.deleted_by;
 
   const { error } = await client.from('transactions').update(payload).eq('id', id);
   if (error) {
@@ -212,16 +235,207 @@ export async function updateTransactionInSupabase(
   }
 }
 
-export async function deleteTransactionFromSupabase(id: string): Promise<void> {
+/**
+ * Soft delete: Move transaction to Recycle Bin
+ */
+export async function softDeleteTransactionFromSupabase(id: string, deletedBy?: string): Promise<void> {
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase client is not configured.');
+
+  const { error } = await client
+    .from('transactions')
+    .update({
+      is_deleted: true,
+      deleted_at: new Date().toISOString(),
+      deleted_by: deletedBy || null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id);
+
+  if (error) {
+    console.error('Error soft-deleting transaction from Supabase:', error);
+    throw error;
+  }
+}
+
+/**
+ * Restore transaction from Recycle Bin
+ */
+export async function restoreTransactionInSupabase(id: string): Promise<void> {
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase client is not configured.');
+
+  const { error } = await client
+    .from('transactions')
+    .update({
+      is_deleted: false,
+      deleted_at: null,
+      deleted_by: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id);
+
+  if (error) {
+    console.error('Error restoring transaction in Supabase:', error);
+    throw error;
+  }
+}
+
+/**
+ * Permanent hard delete: Irreversibly delete transaction
+ */
+export async function permanentDeleteTransactionFromSupabase(id: string): Promise<void> {
   const client = getSupabaseClient();
   if (!client) throw new Error('Supabase client is not configured.');
 
   const { error } = await client.from('transactions').delete().eq('id', id);
   if (error) {
-    console.error('Error deleting transaction from Supabase:', error);
+    console.error('Error permanently deleting transaction from Supabase:', error);
     throw error;
   }
 }
+
+// ==========================================
+// DYNAMIC SECTIONS OPERATIONS
+// ==========================================
+
+export async function fetchSectionsFromSupabase(): Promise<DynamicSection[]> {
+  const client = getSupabaseClient();
+  if (!client) return [];
+
+  try {
+    const { data, error } = await client
+      .from('sections')
+      .select('*')
+      .order('display_order', { ascending: true });
+
+    if (error) {
+      console.warn('Error fetching sections from Supabase:', error.message);
+      return [];
+    }
+    return data || [];
+  } catch {
+    return [];
+  }
+}
+
+export async function saveSectionToSupabase(section: DynamicSection): Promise<void> {
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase client is not configured.');
+
+  const { error } = await client.from('sections').upsert({
+    id: section.id,
+    name: section.name,
+    icon: section.icon,
+    description: section.description || null,
+    display_order: section.display_order,
+    is_enabled: section.is_enabled,
+    updated_at: new Date().toISOString(),
+  });
+
+  if (error) {
+    console.error('Error saving section in Supabase:', error);
+    throw error;
+  }
+}
+
+export async function deleteSectionFromSupabase(id: string): Promise<void> {
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase client is not configured.');
+
+  const { error } = await client.from('sections').delete().eq('id', id);
+  if (error) {
+    console.error('Error deleting section from Supabase:', error);
+    throw error;
+  }
+}
+
+// ==========================================
+// APP SETTINGS & MAINTENANCE MODE
+// ==========================================
+
+export async function fetchAppSettingFromSupabase<T>(key: string): Promise<T | null> {
+  const client = getSupabaseClient();
+  if (!client) return null;
+
+  try {
+    const { data, error } = await client
+      .from('app_settings')
+      .select('value')
+      .eq('key', key)
+      .single();
+
+    if (error || !data) return null;
+    return data.value as T;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveAppSettingToSupabase(key: string, value: any, updatedBy?: string): Promise<void> {
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase client is not configured.');
+
+  const { error } = await client.from('app_settings').upsert({
+    key,
+    value,
+    updated_at: new Date().toISOString(),
+    updated_by: updatedBy || null,
+  });
+
+  if (error) {
+    console.error(`Error saving app setting '${key}' to Supabase:`, error);
+    throw error;
+  }
+}
+
+// ==========================================
+// NOTIFICATIONS & ANNOUNCEMENTS
+// ==========================================
+
+export async function fetchNotificationsFromSupabase(): Promise<BroadcastNotification[]> {
+  const client = getSupabaseClient();
+  if (!client) return [];
+
+  try {
+    const { data, error } = await client
+      .from('notifications')
+      .select('*')
+      .eq('is_active', true)
+      .order('created_at', { ascending: false });
+
+    if (error) return [];
+    return data || [];
+  } catch {
+    return [];
+  }
+}
+
+export async function saveNotificationToSupabase(notif: Partial<BroadcastNotification>): Promise<void> {
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase client is not configured.');
+
+  const { error } = await client.from('notifications').insert({
+    title: notif.title,
+    message: notif.message,
+    type: notif.type || 'info',
+    target_user_id: notif.target_user_id || 'all',
+    is_active: true,
+  });
+
+  if (error) throw error;
+}
+
+export async function deactivateNotificationInSupabase(id: string): Promise<void> {
+  const client = getSupabaseClient();
+  if (!client) return;
+
+  await client.from('notifications').update({ is_active: false }).eq('id', id);
+}
+
+// ==========================================
+// REAL-TIME LISTENER
+// ==========================================
 
 export function subscribeToSupabaseTransactions(onChanged: () => void): () => void {
   const client = getSupabaseClient();
